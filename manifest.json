@@ -1,0 +1,13 @@
+{
+  "hash": "e80ad74da5630637389eb5a15ea68bd89aeabc1b581821dca78b046a76f1894f",
+  "version": "0.4.1",
+  "id": "roche-reference-pair",
+  "name": "GPHONE",
+  "entry": "./gphone.js?v=0.4.1",
+  "permissions": [
+    "ui",
+    "storage",
+    "chat"
+  ],
+  "description": "线上、线下、群聊按姓名引用人物参考图与外貌描述"
+}
