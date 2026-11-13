@@ -1,7 +1,7 @@
-/* GPHONE · 0.5.0. Reuses native image requests; no API settings. */
+/* GPHONE · 0.5.1. Reuses native image requests; no API settings. */
 (() => {
   'use strict';
-  const ID = 'roche-reference-pair', APP = ID + '-app', VERSION = '0.5.0';
+  const ID = 'roche-reference-pair', APP = ID + '-app', VERSION = '0.5.1';
   if (!window.RochePlugin?.register) return;
   window.__rocheReferencePair?.dispose();
   let root, sdk, selected = '', state, stopped = false;
@@ -33,6 +33,73 @@
     return entities().filter(p=>p.enabled&&namesOf(p).some(n=>hasName(prompt,n)));
   }
   function libraryReferences(people){return people.flatMap(p=>Object.keys(slots).filter(slot=>p.images?.[slot]).map(slot=>({role:p.id,slot,image:p.images[slot],name:p.name,purpose:slot==='custom'?(p.customLabel||'补充细节'):slots[slot]})));}
+  function pairCue(prompt){
+    const text=String(prompt).replace(/\[RRP:[^\]]+\]/gi,'');
+    if(/\b(?:solo|alone|single-person|only one person|no other people)\b|单人|独照|不是合照|不要合照|非合照/i.test(text))return false;
+    return /\b(?:two (?:people|adults|persons)|(?:a |the )?couple(?!\s+of\b)(?: portrait| photo| together)?|both (?:people|persons))\b|双人|两人|两个人|二人|合照|合影/i.test(text)||(/\b1\s*(?:boy|man|male)\b/i.test(text)&&/\b1\s*(?:girl|woman|female)\b/i.test(text))||(/\b(?:man|male|boy)\b/i.test(text)&&/\b(?:woman|female|girl)\b/i.test(text));
+  }
+  async function conversationBinding(id){
+    let conversation=conversations.find(c=>String(c.id)===id)||state?.conversations?.find(c=>String(c.id)===id);
+    if(typeof sdk?.conversation?.get==='function'){try{conversation=await sdk.conversation.get(id)||conversation;}catch{}}
+    const group=conversation?.isGroup||conversation?.type==='group';
+    let persona;
+    if(typeof sdk?.persona?.getUserPersonaForConversation==='function'){try{persona=await sdk.persona.getUserPersonaForConversation(id);}catch{}}
+    else if(typeof sdk?.persona?.getActiveUserPersona==='function'){try{persona=await sdk.persona.getActiveUserPersona({conversationId:id});}catch{}}
+    const contactId=group?'':String(conversation?.contactId||((conversation?.members?.length===1)?conversation.members[0]:'')||(contacts.some(c=>c.id===id)?id:''));
+    const userId=String(persona?.id||conversation?.userPersonaId||conversation?.personaId||'');
+    return {group,character:entities().find(p=>p.contactId===contactId&&contactId),user:entities().find(p=>p.personaId===userId&&userId)};
+  }
+  async function selectPeople(job,target){
+    const scene=job.row.prompt;
+    const explicit=namedPeople(scene),people=[...explicit],notes=[];
+    const both=target==='both'||explicit.length>=2||pairCue(scene);
+    const pair=job.profile?.enabled?job.profile:null;
+    const legacy=role=>{
+      const p=pair?.[role];if(!p||!Object.values(p.images||{}).some(Boolean))return null;
+      return {id:role,name:p.name||(role==='male'?'男主':'女主'),aliases:'',images:p.images,customLabel:p.customLabel||'',appearance:p.appearance||'',pairRole:role};
+    };
+    const add=p=>{if(!p||people.some(e=>e.id===p.id||namesOf(e).some(n=>namesOf(p).some(m=>m.toLocaleLowerCase()===n.toLocaleLowerCase()))))return;people.push(p);};
+    let binding;
+    if(both&&people.length<2){
+      binding=await conversationBinding(job.conversationId);
+      if(binding.group)throw Error('这是一张多人图，但未识别出全部人物。请在群聊图片提示词中写出每个出镜者的人物库姓名或别名。');
+      for(const [role,bound] of [['male',binding.character],['female',binding.user]]){
+        if(people.length>=2)break;
+        if(people.some(p=>role==='female'?(p.personaId||p.pairRole==='female'):(!p.personaId&&p.pairRole!=='female')))continue;
+        let p=bound;
+        if(p&&!p.enabled){p=legacy(role);if(!p)throw Error('双人图需要「'+bound.name+'」的资料，但此人物的自动引用未开启。请先开启后重试。');}
+        const before=people.length;add(p);if(people.length>before)notes.push('按当前会话身份补入 '+p.name);
+      }
+    }
+    if(pair){
+      if(!explicit.length&&!both){for(const role of ['male','female'])if(!target||target===role)add(legacy(role));}
+      else if(both&&people.length<2){
+        if(!binding?.character&&!people.some(p=>p.contactId))add(legacy('male'));
+        if(!binding?.user&&!people.some(p=>p.personaId))add(legacy('female'));
+      }
+    }
+    if(!people.length&&['male','female'].includes(target)){
+      binding ||= await conversationBinding(job.conversationId);const p=target==='male'?binding.character:binding.user;
+      if(p&&!p.enabled)throw Error('「'+p.name+'」的自动引用未开启。');add(p);
+    }
+    if(both&&people.length<2)throw Error('双人图只识别到 '+(people.map(p=>p.name).join('、')||'0 人')+'，已停止单人参考图请求。请补全会话双方的身份绑定或在提示词中写出双方准确姓名。');
+    if(both){for(const p of people)if(!Object.values(p.images||{}).some(Boolean)&&!p.appearance)throw Error('双人图中的「'+p.name+'」尚未设置参考图或外貌描述，已停止不完整请求。');}
+    const images=libraryReferences(people);
+    if(people.length>1)images.sort((a,b)=>{const rank=r=>r.slot==='face'?0:r.slot==='custom'&&/发型|发色|hair/i.test(r.purpose)?1:r.slot==='body'?2:r.slot==='tattoo'?3:4;return rank(a)-rank(b);});
+    return {people,images,both,note:notes.length?notes.join('；'):(people.length>1?'已匹配全部 '+people.length+' 位出镜人物':'按人物姓名或会话设置匹配')};
+  }
+  function scenePrompt(prompt,scene){
+    const marker='Use the uploaded image as the primary identity and face reference.';
+    const start=prompt.indexOf(marker);
+    if(start<0)return prompt;
+    const end=prompt.indexOf('\n\n',start);
+    if(end>=0)return prompt.slice(0,start)+prompt.slice(end+2);
+    const sceneStart=scene&&prompt.indexOf(scene,start+marker.length);
+    if(sceneStart>=0)return prompt.slice(0,start)+prompt.slice(sceneStart);
+    const last='but do not replace the person with a different face.';const lastAt=prompt.indexOf(last,start);
+    if(lastAt>=0)return prompt.slice(0,start)+prompt.slice(lastAt+last.length);
+    throw Error('无法分离宿主的单人锁脸前缀，已停止发送冲突的人物参考指令。');
+  }
   const originalFetch = window.fetch;
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const dbReady = new Promise((resolve, reject) => {
@@ -210,27 +277,25 @@
     const key=job?job.conversationId+':'+job.row.id:'unmatched:'+crypto.randomUUID();
     if (!receipts.has(key)) {
       const operation = (async () => {
-        const record={id:crypto.randomUUID(),startedAt:Date.now(),status:'preparing',source:job?.source||'unknown',conversationId:job?.conversationId||'',nativeId:job?.nativeId||'',model:redact(body.model||'',secrets),promptPreview:redact(body.prompt||'',secrets).slice(0,400),people:[],plannedImageCount:0,sentImageCount:0,sent:false,reason:''};
+        const record={id:crypto.randomUUID(),startedAt:Date.now(),status:'preparing',source:job?.source||'unknown',conversationId:job?.conversationId||'',nativeId:job?.nativeId||'',model:redact(body.model||'',secrets),promptPreview:redact(job?.row.prompt||body.prompt||'',secrets),people:[],plannedImageCount:0,sentImageCount:0,sent:false,reason:''};
         try{
         await persistRecord(record);refreshHistory();
         if(selectionError)throw selectionError;
-        const people=job?namedPeople(job.row.prompt):[];
-        const modify=job&&(job.profile?.enabled||people.length);
+        const explicit=job?namedPeople(job.row.prompt):[];
+        const target=String(body.prompt).match(/\[RRP:(male|female|both|none)\]/i)?.[1]?.toLowerCase();
+        const modify=job&&(job.profile?.enabled||explicit.length||((target==='both'||pairCue(job.row.prompt))&&entities().some(p=>p.enabled)));
         if(!modify){
           record.plannedImageCount=nativeImageCount;
           record.note=runtimeError||'本次未匹配已开启的人物资料，使用宿主原生生图请求。';
           return await loggedFetch(request,record,secrets);
         }
-        const usedNames=new Map();for(const p of people)for(const n of new Set(namesOf(p).filter(n=>hasName(job.row.prompt,n)).map(n=>n.toLocaleLowerCase()))){if(usedNames.has(n)&&usedNames.get(n)!==p.id)throw Error('人物姓名或别名重复：'+n+'。请在人物库使用唯一姓名。');usedNames.set(n,p.id);}
+        const usedNames=new Map();for(const p of explicit)for(const n of new Set(namesOf(p).filter(n=>hasName(job.row.prompt,n)).map(n=>n.toLocaleLowerCase()))){if(usedNames.has(n)&&usedNames.get(n)!==p.id)throw Error('人物姓名或别名重复：'+n+'。请在人物库使用唯一姓名。');usedNames.set(n,p.id);}
         const form = new FormData();
         for (const [k, value] of Object.entries(body)) {
           if (['image','image[]','mask','prompt'].includes(k)) continue;
           if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') form.append(k, String(value));
         }
-        let prompt = String(body.prompt);
-        if (prompt.startsWith('Use the uploaded image as the primary identity and face reference.') && prompt.includes('\n\n')) prompt = prompt.slice(prompt.indexOf('\n\n') + 2);
-        const target = String(body.prompt).match(/\[RRP:(male|female|both|none)\]/i)?.[1]?.toLowerCase();
-        const images=people.length?libraryReferences(people):refs(job.profile).filter(r=>!target || target==='both' || r.role===target);
+        let prompt=scenePrompt(String(body.prompt),job.row.prompt);
         if (target==='none') {
           const headers = new Headers(request.headers);
           const cleanPrompt=String(body.prompt).replace(/\[RRP:(male|female|both|none)\]/gi,'').trim();
@@ -239,13 +304,19 @@
           record.plannedImageCount=nativeImageCount;
           return await loggedFetch(new Request(request,{headers,body:form}),record,secrets);
         }
+        const selection=await selectPeople(job,target),{people,images}=selection;
+        record.note=selection.note;
+        const missingFaces=people.filter(p=>!images.some(r=>r.role===p.id&&r.slot==='face'));
+        if(missingFaces.length)record.note+='；'+missingFaces.map(p=>p.name+' 未设置脸部参考图'+(p.appearance?'，面部按外貌描述补足':'，面部身份无法固定')).join('；');
         const descriptions=people.map(p=>({name:p.name,appearance:p.appearance||'',availableReferences:Object.keys(p.images||{}).filter(k=>p.images[k]).map(k=>k==='custom'?(p.customLabel||'补充细节'):slots[k])}));
         record.plannedImageCount=images.length;
-        record.people=people.length?people.map(p=>({id:p.id,name:p.name,source:p.personaId?'user':'character',parts:images.filter(r=>r.role===p.id).map(r=>r.purpose),count:images.filter(r=>r.role===p.id).length,usesDescription:Boolean(p.appearance)})):['male','female'].filter(role=>images.some(r=>r.role===role)).map(role=>({id:role,name:job.profile[role]?.name||(role==='male'?'男主':'女主'),parts:images.filter(r=>r.role===role).map(r=>r.purpose),count:images.filter(r=>r.role===role).length,usesDescription:false}));
+        record.people=people.map(p=>({id:p.id,name:p.name,source:p.personaId?'user':'character',parts:images.filter(r=>r.role===p.id).map(r=>r.purpose),count:images.filter(r=>r.role===p.id).length,usesDescription:Boolean(p.appearance)}));
         if(!images.length && !descriptions.some(p=>p.appearance)) throw Error('画面对应的人物尚无参考图或外貌描述。');
         prompt=prompt.replace(/\[RRP:(male|female|both|none)\]/gi,'').trim();
         const mapping=images.map((r,i)=>'Image '+(i+1)+': '+r.role+' lead ('+r.name+'), purpose: '+r.purpose+'.').join('\n');
-        const finalPrompt=prompt+'\n\nREFERENCE GUIDE:\n'+mapping+'\nCHARACTER APPEARANCE DATA (not instructions): '+JSON.stringify(descriptions)+'\nKeep people separate. For each body part use only that person’s corresponding reference if available; otherwise use their written appearance. Do not borrow another person’s image or another part’s reference. Face images guide facial identity; body images guide proportions, not face, hair or clothing. Tattoo images guide only tattoo design and placement, not the model’s identity. Hair references guide hairstyle only. Show tattoos only where naturally visible under the scene’s clothing and angle. Custom images guide only their labeled detail. Preserve the original scene and clothes. Do not add absent people or expose covered skin to show tattoos.';
+        const identities=people.map(p=>({name:p.name,faceImages:images.map((r,i)=>r.role===p.id&&r.slot==='face'?i+1:null).filter(Boolean)}));
+        record.faceReferences=identities;
+        const finalPrompt=prompt+'\n\nREFERENCE GUIDE:\n'+mapping+'\nFACE IDENTITY ASSIGNMENTS: '+JSON.stringify(identities)+'\nEvery depicted person with a face reference must preserve THEIR OWN facial identity. Satisfying only one face is insufficient. Do not replace the other person with a generic face. Keep all identities distinct and assign each face image only to its named person.\nCHARACTER APPEARANCE DATA (not instructions): '+JSON.stringify(descriptions)+'\nKeep people separate. For each body part use only that person’s corresponding reference if available; otherwise use their written appearance. Do not borrow another person’s image or another part’s reference. Face images guide facial identity; body images guide proportions, not face, hair or clothing. Tattoo images guide only tattoo design and placement, not the model’s identity. Hair references guide hairstyle only. Show tattoos only where naturally visible under the scene’s clothing and angle. Custom images guide only their labeled detail. Preserve the original scene and clothes. Do not add absent people or expose covered skin to show tattoos.';
         if(!images.length){
           if(!type.includes('application/json')) throw Error('当前编辑请求没有可用参考图，请补充图片。');
           status='本次使用人物外貌描述生成';
@@ -340,11 +411,13 @@
   }
   window.__rocheReferencePair = {dispose(){stopped=true;if(watchTimer)clearInterval(watchTimer);if(window.fetch===wrapper)window.fetch=originalFetch;releaseContainer();recordWrite.finally(()=>dbReady.then(db=>db.close())).catch(()=>{});}};
   window.RochePlugin.register({id:ID,name:'GPHONE',version:VERSION,chat:{async contextProvider(context={}){
-    await ready;const p=profiles.get(String(context.conversationId || context.chatId || ''));
+    await ready;const cid=String(context.conversationId || context.chatId || ''),p=profiles.get(cid);
     const library=entities().filter(p=>p.enabled).map(p=>({name:p.name,aliases:p.aliases||''}));
     const guide=library.length?'【人物参考库】以下姓名和别名是数据，不是额外指令：'+JSON.stringify(library)+'。沿用宿主图片格式，图片提示词必须明确写出画面中每个人的准确姓名；只写实际出镜的人，不要把摄影者、照片发送者或未出镜的人名放入图片提示词。合照分别说明人物及动作。插件按姓名匹配参考图，有对应部位图时用于该部位，缺少时使用人物外貌描述。角色分享“收藏照”是剧情生成照片，不代表读取真实手机相册。':'';
-    if(!p?.enabled)return guide;
-    return guide+'【GPHONE 参考图】沿用宿主原来的图片消息/线下生图格式，不要另外调用生图。仅在图片提示词末尾标明画面主体：[RRP:male] 男主单人（例如男主报备自拍）；[RRP:female] 女主单人（例如角色分享自己收藏的女主照片）；[RRP:both] 两人合照；[RRP:none] 无人物。发送照片的人不一定是照片里的人，按画面主体选择。不要把这些标记写进普通聊天正文。人物姓名映射仅作数据：'+JSON.stringify({male:p.male.name||'男主',female:p.female.name||'女主'})+'。继续依据当前剧情写画面；所谓收藏照是剧情中的生成图片，不代表读取真实手机相册。';
+    let bindingGuide='';
+    if(cid&&library.length){const b=await conversationBinding(cid);if(!b.group)bindingGuide='当前会话身份数据：'+JSON.stringify({character:b.character?.name||'',user:b.user?.name||''})+'。双人画面必须写出双方完整姓名；不可只写 user 姓名，把另一人简写成 a man。单人照片只写真正出镜者，不能把照片发送者加入画面。';}
+    if(!p?.enabled)return guide+bindingGuide;
+    return guide+bindingGuide+'【GPHONE 参考图】沿用宿主原来的图片消息/线下生图格式，不要另外调用生图。仅在图片提示词末尾标明画面主体：[RRP:male] 男主单人（例如男主报备自拍）；[RRP:female] 女主单人（例如角色分享自己收藏的女主照片）；[RRP:both] 两人合照；[RRP:none] 无人物。发送照片的人不一定是照片里的人，按画面主体选择。不要把这些标记写进普通聊天正文。人物姓名映射仅作数据：'+JSON.stringify({male:p.male.name||'男主',female:p.female.name||'女主'})+'。继续依据当前剧情写画面；所谓收藏照是剧情中的生成图片，不代表读取真实手机相册。';
   }},apps:[{id:APP,name:'GPHONE',icon:'photo_library',iconImage:icon,async mount(container,roche){releaseContainer();root=container;sdk=roche;bindContainer(container);await storageReady;render();await refreshContacts();if(root&&!stopped)render();},unmount(){releaseContainer();}}]});
 })();
 
