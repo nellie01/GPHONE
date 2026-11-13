@@ -1,13 +1,13 @@
 {
-  "hash": "ec48686f45ac8055d809691221e872b205e5487b6f6bca46ba315de119f5c808",
-  "version": "0.4.2",
+  "hash": "1a8be44309a0940d23517a2c6c52609d9c3f6e25bac72a2c9d27e5da8f7a865f",
+  "version": "0.5.0",
   "id": "roche-reference-pair",
   "name": "GPHONE",
-  "entry": "./gphone.js?v=0.4.2",
+  "entry": "./gphone.js?v=0.5.0",
   "permissions": [
     "ui",
     "storage",
     "chat"
   ],
-  "description": "线上、线下、群聊按姓名引用人物参考图与外貌描述"
+  "description": "GPHONE 人物参考库：角色与 user、线上线下群聊参考图、生成记录及失败原因"
 }
