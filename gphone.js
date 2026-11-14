@@ -396,7 +396,7 @@
           if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') form.append(k, String(value));
         }
         let prompt=scenePrompt(String(body.prompt),job.row.prompt).replace(framePattern,'').trim();
-        if (target==='none') {
+        if (target==='none'&&!frame) {
           const headers = new Headers(request.headers);
           const cleanPrompt=prompt.replace(/\[RRP:(male|female|both|none)\]/gi,'').trim();
           if(type.includes('application/json'))return await loggedFetch(new Request(request,{body:JSON.stringify({...body,prompt:cleanPrompt})}),record,secrets);
