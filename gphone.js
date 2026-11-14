@@ -1,7 +1,7 @@
-/* GPHONE · 0.6.0. Reuses native image requests; no API settings. */
+/* GPHONE · 0.6.1. Reuses native image requests; no API settings. */
 (() => {
   'use strict';
-  const ID = 'roche-reference-pair', APP = ID + '-app', VERSION = '0.6.0';
+  const ID = 'roche-reference-pair', APP = ID + '-app', VERSION = '0.6.1';
   if (!window.RochePlugin?.register) return;
   window.__rocheReferencePair?.dispose();
   let root, sdk, selected = '', state, stopped = false;
@@ -48,7 +48,7 @@
       if(markers.length!==1)throw Error('画面中出现多个出镜说明，请重新生成提示词。');
       let frame;try{frame=JSON.parse(markers[0][1]);}catch{throw Error('出镜说明格式不完整，请重新生成提示词。');}
       const validName=n=>typeof n==='string'&&n.trim().length>0&&n.length<=80;
-      const allowed=['face','eyes','body','hands','hair','tattoo','mask','clothes'];
+      const allowed=['scene','face','eyes','body','hands','hair','tattoo','mask','clothes'];
       if(!frame||!['external','first-person','selfie','mirror'].includes(frame.view)||!Array.isArray(frame.subjects)||frame.subjects.length>12||frame.subjects.some(s=>!s||!validName(s.name)||!Array.isArray(s.parts)||!s.parts.length||s.parts.some(p=>!allowed.includes(p)))||(frame.owner!==undefined&&frame.owner!==''&&!validName(frame.owner)))throw Error('出镜说明的人物、可见部位或拍摄视角无效，请重新生成提示词。');
       const subjects=frame.subjects.map(s=>({name:s.name.trim(),parts:[...new Set(s.parts)]}));
       if(new Set(subjects.map(s=>s.name.toLocaleLowerCase())).size!==subjects.length)throw Error('出镜说明把同一人物列了多次，请合并可见部位后重试。');
@@ -68,7 +68,7 @@
   function visibleReferences(people){
     return libraryReferences(people).filter(r=>{
       const person=people.find(p=>p.id===r.role);if(maskMode(person)==='off'&&(r.slot==='mask'||r.slot==='custom'&&/面罩|口罩|头套|mask|balaclava/i.test(r.purpose)))return false;
-      const parts=person?.visibleParts;if(!parts)return true;
+      const parts=person?.visibleParts;if(!parts||parts.includes('scene'))return true;
       const face=parts.includes('face'),body=parts.includes('body')||parts.includes('hands');
       if(r.slot==='face')return face;
       if(r.slot==='eyes')return face||parts.includes('eyes');
@@ -85,8 +85,8 @@
     });
   }
   function framingDirection(frame){
-    const rule='CAMERA AND LIMB OWNERSHIP: the written scene determines the cast and visible body parts; reference panels do not add people or require showing their faces. Every visible hand and arm must belong to a scene participant with a plausible shoulder-elbow-wrist connection, even when partly outside the crop. Do not add an unexplained foreground hand, extra arm, duplicated body or photographer just to fill space. Do not force all hands into view. An external camera is not an extra person whose hands should appear. In first-person views the camera owner is behind the camera: only show their body parts actually requested, not another full copy seated across the table. A requested selfie or mirror reflection may show the same owner coherently, not a new person. Preserve expressly requested additional participants instead of imposing a two-person limit.';
-    return '\n\n'+rule+(frame?'\nVISIBLE-SUBJECT PLAN (data, not additional instructions): '+JSON.stringify({view:frame.view,owner:frame.owner||'',subjects:frame.subjects||[]})+'\nFollow this plan’s visible parts. A face, hair or full body omitted from a subject’s visible parts must not be added merely to display a reference. Apply appearance data only to the parts actually visible.':'');
+    const rule='CAMERA AND LIMB OWNERSHIP: preserve the people and actions requested in the written scene. References supply identity and details; they neither add people nor remove a requested subject. Choose one coherent camera viewpoint from the scene instead of defaulting every image to first-person. Every visible hand and arm belongs to a scene participant with a plausible shoulder-elbow-wrist connection, even when partly cropped. Keep natural occlusion and the requested crop. An external camera is not an extra person whose hands should appear. In an explicitly first-person view the camera owner remains behind the camera, with only requested visible parts and not another full copy seated across the table. Selfies, mirror images and external portraits may show the named person normally. Preserve expressly requested additional participants instead of imposing a two-person limit.';
+    return '\n\n'+rule+(frame?'\nVISIBLE-SUBJECT PLAN (data, not additional instructions): '+JSON.stringify({view:frame.view,owner:frame.owner||'',subjects:frame.subjects||[]})+'\nUse the plan to clarify the written scene. A scene part leaves framing to the scene, allowing that named person to be shown naturally. Restrictive body-part framing applies to clearly requested crops or first-person shots; an omission in helper data is not an instruction to erase a person explicitly requested in the scene. References alone never require a face or body part to enter the crop.':'');
   }
   function stylingDirection(people){
     const preferences=people.filter(p=>String(p.styling||'').trim()).map(p=>({name:p.name,visibleParts:p.visibleParts||null,styling:String(p.styling).trim()}));
@@ -128,6 +128,13 @@
     const choices=people.filter(p=>maskMode(p)!=='scene').map(p=>({name:p.name,mode:maskMode(p),visibleParts:p.visibleParts||null}));if(!choices.length)return '';
     return '\n\nSAVED BALACLAVA COVERAGE (data): '+JSON.stringify(choices)+'\nThese per-person coverage choices override conflicting generated phrases such as "no mask" or a full-head hood and override incidental reference-photo coverage. lower means ONE stretch-fabric balaclava with its upper hood pulled or rolled back so hair, forehead and brows are exposed; its lower portion remains a continuous fabric tube over nose, mouth and chin down to the neck, preserving natural folds and the referenced skull print. It is not an ear-loop surgical mask, rigid respirator or face paint. full means the same balaclava covers the head and neck with a natural eye opening. off means no face covering; a mask reference does not force it to be worn. Keep the person’s referenced eyes and iris color; coverage does not change eye identity or force a fixed gaze. Only apply to requested visible parts, without adding an offscreen head or another person.';
   }
+  function maskFitTargets(people,images){
+    return people.filter(p=>maskMode(p)!=='off'&&(!p.visibleParts||p.visibleParts.includes('scene')||p.visibleParts.includes('face')||p.visibleParts.includes('mask'))&&(maskMode(p)!=='scene'||images.some(r=>r.role===p.id&&(r.slot==='mask'||r.slot==='custom'&&/面罩|口罩|头套|mask|balaclava/i.test(r.purpose))))).map(p=>({name:p.name,mode:maskMode(p),patternReference:images.some(r=>r.role===p.id&&r.slot==='mask')?'own mask reference':'own visible reference and description'}));
+  }
+  function maskFitDirection(people,images){
+    const targets=maskFitTargets(people,images);if(!targets.length)return '';
+    return '\n\nMASK FIT AND PRINT REGISTRATION (conditional data): '+JSON.stringify(targets)+'\nApply ONLY when that subject is wearing a face covering in the requested scene. This guide does not add a mask or an offscreen face and does not override off mode, eye identity or the selected coverage. Unless an explicitly loose fit is requested, use thin flexible stretch fabric following the CURRENT person’s nose bridge, cheek contours, jaw and chin at the current angle. Adapt the garment to the face; never widen, shorten or reshape the face to fit the reference garment. Keep the upper edge gently contoured over the bridge and below the eyes, with natural skin contact, small tension creases and believable thickness. Avoid a flat rectangular front, floating gaps or an oversized pouch below the chin. Keep the neck section close to the neck with only a few fine folds, not a broad scarf, flared collar or thick stacked roll. In lower mode, any pulled-back hood material lies low and flat at the nape rather than building a bulky ring.\nFor a referenced skull print, match its COVERAGE of the covered lower face using anatomical anchors, not the reference image’s pixel dimensions: the nasal motif follows the nose, cheek sections extend over the covered cheeks, the teeth track the mouth and curve around the lower face, and the lower motif fits the chin. Do not shrink the whole skull to a small badge centered around nose and mouth when the reference spans the cheeks and jaw. Expanding print coverage does not enlarge the fabric garment, and the skull need not extend down the entire neck tube. The ink is part of the fabric, deforming with facial curvature, perspective, small cloth folds, lighting and weave; avoid a flat pasted-on sticker, a hard bone plate, real exposed teeth or face paint. Preserve the reference design and its intended coverage instead of inventing another skull or a universal print size. Do not invent a skull on a plain garment.';
+  }
   function naturalDirection(scene,people,frame){
     const identity='For faces actually visible in the written scene, preserve the recognizable facial structure, age, distinctive features and proportions of EACH corresponding named person. Do not add a face when only hands or another body part are requested. Do not replace either person with a generic idealized face, blend their identities, or transfer one person’s features to the other.';
     const features='FEATURE RECONCILIATION: a mole, beauty mark, scar or tattoo described in text and shown in that same person’s corresponding reference is the SAME physical feature, not an instruction to add another copy. Repeated mentions or views do not increase its count. Where a corresponding reference clearly shows the feature, preserve its count and anatomical location; if text disagrees, use that reference rather than combining both locations into extra marks. Written appearance supplies missing details, not extra copies of visible features. Keep intentional multiple distinct marks; do not impose one mole on every person or remove unrelated freckles. For a person without a corresponding reference, follow the stated count and location in their own written appearance. Anchor marks to the person’s anatomy, not the image’s left/right coordinates; when the head turns or the feature is occluded, do not mirror, move or duplicate it onto visible skin just to show it. Only an explicit request for a new, separate mark calls for adding one.';
@@ -135,7 +142,7 @@
     const gaze='PURPOSEFUL GAZE FOR EACH PERSON: use a concrete gaze target supported by the current action, such as the object in their hands, the person they are interacting with, or the camera for appropriate camera contact. When one person examines an object and another watches them, the first looks at that object and the second looks at that person; apply this relationship only when it fits the written scene. Align both eyes toward the intended target with plausible head orientation, eyelids and focus distance. Let expression reflect the scene’s emotion, with relaxed facial muscles and subtle natural asymmetry. Avoid vacant, unfocused or mechanically identical stares. People may share a gaze target when the scene calls for it; never force everyone to look away from the camera or choose a random direction just to differ from the reference.';
     const motion='The written scene controls what happens now. Explicit scene directions for head orientation, gaze, expression and camera viewpoint take priority over incidental pose or gaze in reference photos and stored appearance descriptions. When unspecified, choose these directions from the activity and interaction instead of defaulting to the reference angle or a camera stare. Adapt pose, facial expression, gaze, body orientation, clothing, camera angle and framing to that scene. Reference poses, expressions, backgrounds and lighting are examples, not poses to copy. Show relaxed, plausible gestures and natural interaction. Keep coherent anatomy, perspective, contact between bodies, and one shared lighting environment. Honor explicitly requested front views, camera eye contact or reference-pose recreation.';
     const style=/photograph|photoreal|selfie|candid|photo\b|照片|自拍|写实|抓拍/i.test(scene)?'For a photographic scene, use believable skin texture, natural variations in expression and soft realistic transitions in light. Avoid plastic skin, excessive beautification and a pasted-on face. Preserve identity across the requested angle without freezing the original expression.':'Keep the visual style explicitly requested in the scene; identity references must not force an unrelated photographic, cartoon or illustration style.';
-    const faceVisible=!frame||frame.subjects.some(s=>s.parts.includes('face')||s.parts.includes('eyes'));
+    const faceVisible=!frame||frame.subjects.some(s=>s.parts.includes('scene')||s.parts.includes('face')||s.parts.includes('eyes'));
     const direction=faceVisible?identity+' '+projection+' '+motion+' '+gaze:'Render only the requested visible body parts and surroundings from the specified camera viewpoint. Facial identity and eye-gaze instructions do not require any offscreen face to appear. Use plausible relaxed hand gestures, anatomy, contact with objects, perspective and shared lighting.';
     return '\n\nNATURAL SCENE DIRECTION FOR '+(people.map(p=>p.name).join(' AND ')||'THE REQUESTED SCENE')+':\n'+direction+' '+features+' '+style+' When a reference and a written appearance differ, use the corresponding body-part reference for that feature and the written appearance only to fill missing information. Do not invent or expose a body part just to display a reference detail.';
   }
@@ -152,7 +159,7 @@
       try{bitmap=await createImageBitmap(imageBlob(ref.image));const scale=Math.min((w-16)/bitmap.width,(h-46)/bitmap.height);const dw=bitmap.width*scale,dh=bitmap.height*scale;ctx.drawImage(bitmap,x+(w-dw)/2,y+36+(h-40-dh)/2,dw,dh);}catch{throw Error('参考板无法读取「'+ref.name+'」的'+ref.purpose+'图片，请重新上传该参考图。');}finally{bitmap?.close?.();}
     };
     for(let i=0;i<people.length;i++){
-      const p=people[i],x=pad+(i%columns)*(pw+gap),y=pad+title+Math.floor(i/columns)*(ph+gap),refs=images.filter(r=>r.role===p.id),face=refs.find(r=>r.slot==='face'),eyes=refs.find(r=>r.slot==='eyes'),partial=p.visibleParts&&!p.visibleParts.includes('face'),primary=partial?(refs.find(r=>r.slot==='body')||refs[0]):face||eyes,eyeDetail=eyes&&eyes!==primary?eyes:null,extra=refs.filter(r=>r!==primary&&r!==eyeDetail);
+      const p=people[i],x=pad+(i%columns)*(pw+gap),y=pad+title+Math.floor(i/columns)*(ph+gap),refs=images.filter(r=>r.role===p.id),face=refs.find(r=>r.slot==='face'),eyes=refs.find(r=>r.slot==='eyes'),partial=p.visibleParts&&!p.visibleParts.includes('face')&&!p.visibleParts.includes('scene'),primary=partial?(refs.find(r=>r.slot==='body')||refs[0]):face||eyes,eyeDetail=eyes&&eyes!==primary?eyes:null,extra=refs.filter(r=>r!==primary&&r!==eyeDetail);
       ctx.strokeStyle='#bbb';ctx.strokeRect(x,y,pw,ph);ctx.fillStyle='#111';ctx.font='bold 25px sans-serif';ctx.fillText('PERSON '+(i+1)+' / '+p.name,x+12,y+34,pw-24);
       const eyeH=eyeDetail?Math.min(190,Math.floor(ph*.18)):0,faceH=Math.min(620,Math.floor((ph-76-eyeH)*.62));await draw(primary,x+12,y+50,pw-24,faceH,'P'+(i+1)+(partial?' VISIBLE '+p.visibleParts.join('/')+' ONLY / ':primary?.slot==='eyes'?' EYE IDENTITY / ':' FACE IDENTITY (not pose) / ')+p.name);
       let ey=y+faceH+64;if(eyeDetail){await draw(eyeDetail,x+12,ey,pw-24,eyeH,'P'+(i+1)+' EYES / identity, not gaze');ey+=eyeH+12;}
@@ -179,6 +186,46 @@
     const contactId=group?'':String(conversation?.contactId||((conversation?.members?.length===1)?conversation.members[0]:'')||(contacts.some(c=>c.id===id)?id:''));
     const userId=String(persona?.id||conversation?.userPersonaId||conversation?.personaId||'');
     return {group,character:entities().find(p=>p.contactId===contactId&&contactId),user:entities().find(p=>p.personaId===userId&&userId)};
+  }
+  function sourceCamera(scene){
+    const text=String(scene).replace(framePattern,'').replace(/\b(?:no|not(?:\s+a)?|without)\s+(?:selfies?|first[- ]person(?:\s+(?:perspective|view|POV))?|third[- ]person(?:\s+(?:perspective|view))?)/gi,'').replace(/(?:不要|不使用|不是|非)(?:第三(?:人称|视角)|第一人称|自拍)/g,'');
+    const cues=[['external',/第三(?:人称|视角)|外部(?:镜头|视角)|\bthird[- ]person\b|\bexternal (?:camera|view|photograph|shot)\b/i],['selfie',/自拍|\bselfie\b/i],['first-person',/第一人称|\bfirst[- ]person\b|\bPOV\b/i]].map(([view,re])=>{const m=re.exec(text);return m?{view,index:m.index}:null;}).filter(Boolean).sort((a,b)=>a.index-b.index);
+    return cues.length&&(cues[0].index<180||cues.length===1)?{view:cues[0].view,conflict:new Set(cues.map(c=>c.view)).size>1}:null;
+  }
+  function unifyCameraText(text,view,subject=''){
+    if(!['external','selfie'].includes(view))return text;
+    const replacement=view==='selfie'?'a selfie showing '+(subject||'the requested person'):'an external third-person photograph'+(subject?' showing '+subject:'');
+    let result=String(text);
+    if(subject&&view==='external')result=result.replace(/\b(?:an?\s+)?first[- ]person(?:\s+(?:perspective|point of view|POV|view))?\s+from\s+([^.!?\n]*?\b(?:chair|sofa|couch|armchair))\b/gi,(_,seat)=>replacement+' seated in '+seat);
+    result=result.replace(/\b(?:an?\s+)?first[- ]person(?:\s+(?:perspective|point of view|POV|view))?\b/gi,replacement).replace(/\bPOV(?: shot| view)?\b/gi,replacement).replace(/第一人称(?:视角|拍摄)?/g,view==='selfie'?'自拍视角':'第三人称视角');
+    if(subject&&view==='external')result=result.replace(/\bin the foreground,\s+(?:a|one) hand\b/gi,'In the foreground, '+subject+'’s hand').replace(/\b(?:the person|the photographer|the camera-holder)[’']s\s+(lap|thigh|knee)\b/gi,(_,part)=>subject+'’s '+part).replace(/\btheir\s+(lap|thigh|knee)\b/gi,(_,part)=>subject+'’s '+part);
+    return result;
+  }
+  async function resolveComposition(job,target){
+    if(!job.profile?.enabled&&!entities().some(p=>p.enabled))return {frame:null,scene:job.row.prompt,note:''};
+    const parsed=framePlan(job.row.prompt),scene=parsed?.scene||job.row.prompt.replace(framePattern,'').trim(),camera=sourceCamera(scene);
+    if(camera?.view==='first-person')return {frame:parsed,scene,note:''};
+    const candidates=[...entities().filter(p=>p.enabled)];
+    if(job.profile?.enabled)for(const role of ['male','female']){const p=job.profile[role];if(p?.name&&!candidates.some(c=>namesOf(c).some(n=>n.toLocaleLowerCase()===p.name.toLocaleLowerCase())))candidates.push({...p,id:role,name:p.name});}
+    let cast=candidates.filter(p=>namesOf(p).some(n=>hasName(scene,n))).filter(p=>!namesOf(p).some(n=>{const name=n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');return new RegExp('(?:photographed|taken|shot)\\s+by\\s+'+name+'(?:\\b|$)|(?:摄影者|拍摄者|由)\\s*'+name,'i').test(scene);}));
+    if(!camera&&!parsed)return {frame:null,scene,note:''};
+    const both=target==='both'||pairCue(scene)||cast.length>1;
+    let selectionNote='';
+    if(both&&cast.length<2){const selection=await selectPeople(job,target,null);cast=selection.people;selectionNote=selection.note;}
+    const solo=/\b(?:solo|alone|single-person|only one person)\b|单人|独照|只拍/i.test(scene);
+    if(solo&&['male','female'].includes(target))cast=(await selectPeople(job,target,null)).people;
+    const partial=/\b(?:hands?[- ]only|only (?:his |her |their )?hands?|close[- ]up of (?:his |her |their )?hands?)\b|只露手|仅(?:拍|露)手|手部特写/i.test(scene);
+    const omittedOwner=!camera&&parsed?.view==='first-person'&&!partial&&cast.some(p=>namesOf(p).some(n=>n.toLocaleLowerCase()===String(parsed.owner||'').toLocaleLowerCase())&&!parsed.subjects.some(s=>namesOf(p).some(n=>n.toLocaleLowerCase()===s.name.toLocaleLowerCase())));
+    const view=camera?.view||(omittedOwner?'external':parsed?.view||'external');
+    const conflict=Boolean(camera?.conflict||camera&&parsed&&parsed.view!==view||omittedOwner);
+    const defaults=partial?['hands']:['scene'];
+    let subjects=parsed&&!conflict&&!solo?[...(parsed.subjects||[])]:[];
+    for(const p of cast){if(!subjects.some(s=>namesOf(p).some(n=>n.toLocaleLowerCase()===s.name.toLocaleLowerCase())))subjects.push({name:p.name,parts:defaults});}
+    if(!subjects.length&&parsed?.subjects?.length)subjects=parsed.subjects;
+    const primary=subjects.length===1?subjects[0].name:'';
+    const normalized=camera?unifyCameraText(scene,view,primary):scene;
+    const frame=subjects.length?{view,owner:view==='selfie'||view==='first-person'?(parsed?.owner||''):'',subjects,scene:normalized,source:'scene-camera'}:parsed?{...parsed,view,scene:normalized}:null;
+    return {frame,scene:normalized,preferredView:camera?view:undefined,primary,note:(selectionNote?selectionNote+'；':'')+(camera?'已按正文的'+(view==='selfie'?'自拍':'第三人称')+'要求统一相机视角；出镜人物按正文保留':'按画面正文保留出镜人物；辅助说明不作为删人指令')};
   }
   async function selectPeople(job,target,frame){
     const scene=job.row.prompt;
@@ -435,9 +482,9 @@
         try{
         await persistRecord(record);refreshHistory();
         if(selectionError)throw selectionError;
-        const frame=job?framePlan(job.row.prompt):null;
-        const explicit=job?namedPeople(frame?.scene||job.row.prompt):[];
         const target=String(body.prompt).match(/\[RRP:(male|female|both|none)\]/i)?.[1]?.toLowerCase();
+        const composition=job?await resolveComposition(job,target):{frame:null},frame=composition.frame;
+        const explicit=job?namedPeople(frame?.scene||job.row.prompt):[];
         const modify=job&&(job.profile?.enabled||explicit.length||((frame||target==='both'||pairCue(job.row.prompt))&&entities().some(p=>p.enabled)));
         if(!modify){
           record.plannedImageCount=nativeImageCount;
@@ -451,6 +498,7 @@
           if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') form.append(k, String(value));
         }
         let prompt=scenePrompt(String(body.prompt),job.row.prompt).replace(framePattern,'').trim();
+        if(composition.preferredView)prompt=unifyCameraText(prompt,composition.preferredView,composition.primary);
         if (target==='none'&&!frame) {
           const headers = new Headers(request.headers);
           const cleanPrompt=prompt.replace(/\[RRP:(male|female|both|none)\]/gi,'').trim();
@@ -461,11 +509,13 @@
         }
         const selection=await selectPeople(job,target,frame),people=await enrichPeople(selection.people),images=selection.images;
         record.note=selection.note;
+        if(composition.note)record.note+='；'+composition.note;
         const styled=people.filter(p=>String(p.styling||'').trim());if(styled.length)record.note+='；已附 '+styled.map(p=>p.name).join('、')+' 的个人造型要求';
         const nativePeople=people.filter(p=>p.nativeAppearance);if(nativePeople.length)record.note+='；已读取 '+nativePeople.map(p=>p.name).join('、')+' 的原有人设外貌资料';
         const statedHeights=people.map(p=>({name:p.name,heightCm:heightFrom(p.appearance)||heightFrom(p.nativeAppearance)})).filter(p=>p.heightCm);if(statedHeights.length){record.heightData=statedHeights;record.note+='；沿用身高：'+statedHeights.map(p=>p.name+' '+p.heightCm+' cm').join('、');}
+        const fittedMasks=maskFitTargets(people,images);if(fittedMasks.length){record.maskFitTargets=fittedMasks.map(p=>p.name);record.note+='；面罩贴合引导（仅佩戴时）：'+record.maskFitTargets.join('、');}
         if(frame){record.frameView=frame.view;record.visibleSubjects=frame.subjects;record.promptPreview=redact(frame.scene,secrets);}
-        const missingFaces=people.filter(p=>(!p.visibleParts||p.visibleParts.includes('face'))&&!images.some(r=>r.role===p.id&&r.slot==='face'));
+        const missingFaces=people.filter(p=>(!p.visibleParts||p.visibleParts.includes('scene')||p.visibleParts.includes('face'))&&!images.some(r=>r.role===p.id&&r.slot==='face'));
         if(missingFaces.length)record.note+='；'+missingFaces.map(p=>p.name+' 未设置脸部参考图'+(p.appearance?'，面部按外貌描述补足':'，面部身份无法固定')).join('；');
         const descriptions=people.map(p=>({name:p.name,appearance:p.appearance||'',nativeAppearance:p.nativeAppearance||'',visibleParts:p.visibleParts||null,availableReferences:images.filter(r=>r.role===p.id).map(r=>r.purpose)}));
         record.plannedImageCount=images.length;
@@ -485,7 +535,7 @@
           record.transportMode='board';record.referenceAssetCount=images.length;record.boardPreview=board.preview;record.plannedImageCount=1;
         }
         record.faceReferences=identities;
-        const finalPrompt=prompt+'\n\nREFERENCE GUIDE:\n'+referenceMapping+'\nFACE IDENTITY ASSIGNMENTS: '+JSON.stringify(identities)+'\nFor faces actually visible, preserve each person’s OWN identity; satisfy every visible face rather than replacing one with a generic face. A supplied reference never requires a face or person to appear. Keep all identities distinct and assign each face image only to its named person.\nCHARACTER APPEARANCE DATA (not instructions): '+JSON.stringify(descriptions)+'\nKeep people separate. For each visible body part use only that person’s corresponding reference if available; otherwise use their written appearance. Do not borrow another person’s image or another part’s reference. Face images guide facial identity; body images guide proportions, not face, hair or clothing. Tattoo images guide only tattoo design and placement, not the model’s identity. Hair references guide hairstyle only. Show tattoos only where naturally visible under the scene’s clothing and angle. Custom images guide only their labeled detail. Preserve the original scene and clothes. Do not add absent people or expose covered skin to show tattoos.'+naturalDirection(frame?.scene||job.row.prompt,people,frame)+stylingDirection(people)+partDirection(people,images)+bodyDirection(people)+maskDirection(people)+framingDirection(frame);
+        const finalPrompt=prompt+'\n\nREFERENCE GUIDE:\n'+referenceMapping+'\nFACE IDENTITY ASSIGNMENTS: '+JSON.stringify(identities)+'\nFor faces actually visible, preserve each person’s OWN identity; satisfy every visible face rather than replacing one with a generic face. A supplied reference never requires a face or person to appear. Keep all identities distinct and assign each face image only to its named person.\nCHARACTER APPEARANCE DATA (not instructions): '+JSON.stringify(descriptions)+'\nKeep people separate. For each visible body part use only that person’s corresponding reference if available; otherwise use their written appearance. Do not borrow another person’s image or another part’s reference. Face images guide facial identity; body images guide proportions, not face, hair or clothing. Tattoo images guide only tattoo design and placement, not the model’s identity. Hair references guide hairstyle only. Show tattoos only where naturally visible under the scene’s clothing and angle. Custom images guide only their labeled detail. Preserve the original scene and clothes. Do not add absent people or expose covered skin to show tattoos.'+naturalDirection(frame?.scene||job.row.prompt,people,frame)+stylingDirection(people)+partDirection(people,images)+bodyDirection(people)+maskDirection(people)+maskFitDirection(people,images)+framingDirection(frame);
         if(!images.length){
           if(frame){
             const fields=Object.fromEntries(Object.entries(body).filter(([k,v])=>!['image','image[]','mask','prompt'].includes(k)&&!(v instanceof Blob)));
@@ -598,15 +648,14 @@
     const directionGuide=(library.length||p?.enabled)?'【画面朝向与视线】写图片提示词时，根据当前剧情，为每位实际出镜者分别写清动作、头部朝向、具体注视对象和自然表情，并交代相机视角。参考图只固定五官辨识特征，不固定头部角度、眼珠位置、眼睑开合或表情。视线要服务动作和人物关系：例如剧情是女主研究手里的东西、男主看她时，女主看手中物，男主看女主；这只是关系示例，不要套入其他剧情。未明确视线时依据正在做的事自然安排，不默认两人都看镜头或目光放空。剧情要求看镜头、共同看某物、正面照或复现参考姿势时照常遵循，不要为了变化随机转头。仅在图片提示词中补全这些画面细节，普通聊天沿用原格式。':'';
     const featureGuide=(library.length||p?.enabled)?'【外貌特征合并】人设、画面文字和对应参考图里的同一颗痣、疤痕或纹身是同一处特征，重复提及不增加数量。参考图已清楚显示的部位，以该图的数量和人体位置为准，文字只补缺失信息，不另补一颗；没有对应参考图时按外貌文字的数量和位置。保留本来就有的多颗痣，不把所有人物强制成一颗，也不把雀斑删掉。左右按人物自身区分，转头或遮挡时不能把隐藏的痣移到另一边；除非明确要求新增另一处特征。':'';
     const styleGuide=(library.length||p?.enabled)?'【个人造型】styling 是用户为对应人物保存的发型、发色、面罩范围或服饰要求。仅对该人物实际可见的部位使用；五官和年龄保留本人参考。明确的造型要求优先于参考照片里附带的头套、面罩范围和旧发型，不把半脸面罩变成全头头套，也不把这一人的造型套给其他人。造型要求不增加出镜人物或露出原本画外的头部；没有填写的造型仍按剧情和对应参考。':'';
-    const anatomyGuide=(library.length||p?.enabled)?'【身形、眼部与巴拉克拉瓦】从双方已有的人物设定和外貌描述中带入各自的身高、体型与相对比例，不要省略成笼统的 tall man / young woman，不要编造未写的身高。proportions 是额外比例补充。娇小的成年人仍需协调的头肩与头身比例，不能把脸部参考特写的大小当作大头比例；坐姿、坐在腿上或近景要考虑透视。眼型、眼距、眉形与虹膜颜色使用该人物眼部参考，没有时用脸部参考，视线方向随剧情。maskMode=lower 表示巴拉克拉瓦上部向后褪下，头发额头露出，下半部仍从鼻口下巴连续延伸到颈部，不是耳挂口罩；full 是全头覆盖，off 是不佩戴，scene 按剧情。已保存的模式优先，不要同时写“戴面罩”和 no mask。只在画面可见部位使用这些资料。':'';
-    const frameGuide=(library.length||p?.enabled)?'【实际出镜范围】每张图片提示词末尾再附一份出镜数据，格式为 [[GPHONE_FRAME:{"view":"external","owner":"","subjects":[{"name":"实际出镜者准确姓名","parts":["face","body"]}]}]]。view 只能是 external（外部镜头）、first-person（第一人称）、selfie（自拍）或 mirror（镜中）；owner 是第一人称或自拍的持机人姓名，其他情况可为空。subjects 只列实际可见的人及部位，parts 从 face、eyes、body、hands、hair、tattoo、mask、clothes 中选。第一人称只有男主手拿杯子时，只列男主和 hands，不加入双方人脸；第一人称看女主、男主只露手时，分别列女主 face/body 与男主 hands。未露任何部位的摄影者只放 owner，不放 subjects。外部双人照则列双方 face/body，不凭空增加前景摄影者的手。每只手明确属于谁，不因有参考图就要求此人露脸；同一个人不能既在镜头后又完整坐在对面，除非剧情明确有镜面或自拍构图。此数据只放图片提示词，不写进聊天正文，不额外调用生图。':'';
+    const anatomyGuide=(library.length||p?.enabled)?'【身形、眼部与巴拉克拉瓦】从双方已有的人物设定和外貌描述中带入各自的身高、体型与相对比例，不要省略成笼统的 tall man / young woman，不要编造未写的身高。proportions 是额外比例补充。娇小的成年人仍需协调的头肩与头身比例，不能把脸部参考特写的大小当作大头比例；坐姿、坐在腿上或近景要考虑透视。眼型、眼距、眉形与虹膜颜色使用该人物眼部参考，没有时用脸部参考，视线方向随剧情。maskMode=lower 表示巴拉克拉瓦上部向后褪下，头发额头露出，下半部仍从鼻口下巴连续延伸到颈部，不是耳挂口罩。布料按此人物脸型贴合，颈部只保留少量细褶；骷髅印花按参考中的脸颊与下颌覆盖比例适配，不缩成鼻口处的小标志，也不把整块布料放大；full 是全头覆盖，off 是不佩戴，scene 按剧情。已保存的模式优先，不要同时写“戴面罩”和 no mask。只在画面可见部位使用这些资料。':'';
+    const frameGuide=(library.length||p?.enabled)?'【相机与出镜数据】按当前剧情或用户指定的拍摄方式写完整画面，不默认使用第一人称。人物照片、报备自拍和外部合照都可正常展示人物；剧情明确从某人眼中看场景时才使用第一人称。整段相机描述保持一致，不能开头写第三视角，后文仍写 first-person perspective。每张图片提示词末尾附辅助数据，格式为 [[GPHONE_FRAME:{"view":"external","owner":"","subjects":[{"name":"实际出镜者准确姓名","parts":["scene"]}]}]]。view 为 external（外部镜头）、first-person（第一人称）、selfie（自拍）或 mirror（镜中）；owner 是第一人称或自拍的持机人，其余可为空。subjects 和正文所写的出镜人物一致，不因省略辅助条目而删去正文要求的人物。普通人物照可用 scene，由剧情决定裁剪；只有明确局部特写或第一人称局部时才限定 face、eyes、body、hands、hair、tattoo、mask、clothes 等可见部位。未出镜的摄影者只记在 owner，不当成画面主体；每只可见的手属于具体出镜者，外部拍摄不额外添加摄影者的手。自拍、合照、镜中和第一人称各按自身构图处理，不把某一视角的规则套到所有照片。这份辅助数据只放图片提示词，不写进聊天正文，不额外调用生图。':'';
     let bindingGuide='';
     if(cid&&library.length){const b=await conversationBinding(cid);if(!b.group)bindingGuide='当前会话身份数据：'+JSON.stringify({character:b.character?.name||'',user:b.user?.name||''})+'。双人画面必须写出双方完整姓名；不可只写 user 姓名，把另一人简写成 a man。单人照片只写真正出镜者，不能把照片发送者加入画面。';}
     if(!p?.enabled)return guide+bindingGuide+directionGuide+featureGuide+styleGuide+anatomyGuide+frameGuide;
     return guide+bindingGuide+directionGuide+featureGuide+styleGuide+anatomyGuide+frameGuide+'【GPHONE 参考图】沿用宿主原来的图片消息/线下生图格式，不要另外调用生图。仅在图片提示词末尾标明画面主体：[RRP:male] 男主单人（例如男主报备自拍）；[RRP:female] 女主单人（例如角色分享自己收藏的女主照片）；[RRP:both] 两人合照；[RRP:none] 无人物。发送照片的人不一定是照片里的人，按画面主体选择。不要把这些标记写进普通聊天正文。人物姓名映射仅作数据：'+JSON.stringify({male:p.male.name||'男主',female:p.female.name||'女主',maleStyling:p.male.styling||'',femaleStyling:p.female.styling||'',maleProportions:p.male.proportions||'',femaleProportions:p.female.proportions||'',maleMaskMode:maskMode(p.male),femaleMaskMode:maskMode(p.female)})+'。继续依据当前剧情写画面；所谓收藏照是剧情中的生成图片，不代表读取真实手机相册。';
   }},apps:[{id:APP,name:'GPHONE',icon:'photo_library',iconImage:icon,async mount(container,roche){releaseContainer();root=container;sdk=roche;bindContainer(container);await storageReady;render();await refreshContacts();if(root&&!stopped)render();},unmount(){releaseContainer();}}]});
 })();
-
 
 
 
