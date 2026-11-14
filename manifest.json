@@ -1,9 +1,9 @@
 {
-  "hash": "c9a37730d0141961f4908e7348fb067701d35d1e6c6af34feab413c67e6e62b7",
-  "version": "0.5.2",
+  "hash": "8e766dfc4f97481cccbef6d683f1864e3ea01ca6e1b2dc1f2cde988f7104f39b",
+  "version": "0.5.3",
   "id": "roche-reference-pair",
   "name": "GPHONE",
-  "entry": "./gphone.js?v=0.5.2",
+  "entry": "./gphone.js?v=0.5.3",
   "permissions": [
     "ui",
     "storage",
