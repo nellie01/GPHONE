@@ -1,9 +1,9 @@
 {
-  "hash": "962bd01381d10ae0c30d13a2ed533095c104a8659050efdf707569672a84d802",
-  "version": "0.6.5",
+  "hash": "8fa9839b1ff494f04a42252719a0c63cfdc829f8a9ca6c65ea7e1c40e62a2fa4",
+  "version": "0.6.6",
   "id": "roche-reference-pair",
   "name": "GPHONE",
-  "entry": "https://raw.githubusercontent.com/nellie01/GPHONE/396fe23e9dc41055bb6f2090a899548f18b43f80/gphone.js",
+  "entry": "https://raw.githubusercontent.com/nellie01/GPHONE/be19d2c63279441eff62a78c825480e9f1315933/gphone.js",
   "permissions": [
     "ui",
     "storage",
