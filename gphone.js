@@ -1,7 +1,7 @@
-/* GPHONE · 0.6.5. Reuses native image requests; no API settings. */
+/* GPHONE · 0.6.6. Reuses native image requests; no API settings. */
 (() => {
   'use strict';
-  const ID = 'roche-reference-pair', APP = ID + '-app', VERSION = '0.6.5';
+  const ID = 'roche-reference-pair', APP = ID + '-app', VERSION = '0.6.6';
   if (!window.RochePlugin?.register) return;
   window.__rocheReferencePair?.dispose();
   let root, sdk, selected = '', state, stopped = false;
@@ -77,7 +77,9 @@
     return libraryReferences(people).filter(r=>{
       const person=people.find(p=>p.id===r.role);if(maskMode(person)==='off'&&(r.slot==='mask'||r.slot==='custom'&&/面罩|口罩|头套|mask|balaclava/i.test(r.purpose)))return false;
       if(r.slot==='faceAngle'&&person?.images?.face)return false;
-      const parts=person?.visibleParts;if(!parts||parts.includes('scene'))return true;
+      const parts=person?.visibleParts;
+      if(r.slot==='eyes'&&(!parts||parts.includes('scene')||parts.includes('face'))&&r.image===(person?.images?.face||person?.images?.faceAngle))return false;
+      if(!parts||parts.includes('scene'))return true;
       const face=parts.includes('face'),body=parts.includes('body')||parts.includes('hands');
       if(isFaceReference(r))return face;
       if(r.slot==='eyes')return face||parts.includes('eyes');
@@ -94,7 +96,7 @@
     });
   }
   function framingDirection(frame){
-    const rule='CAMERA AND LIMB OWNERSHIP: preserve the people and actions requested in the written scene. References supply identity and details; they neither add people nor remove a requested subject. Choose one coherent camera viewpoint from the scene instead of defaulting every image to first-person. Every visible hand and arm belongs to a scene participant with a plausible shoulder-elbow-wrist connection, even when partly cropped. Keep natural occlusion and the requested crop. An external camera is not an extra person whose hands should appear. In an explicitly first-person view the camera owner remains behind the camera, with only requested visible parts and not another full copy seated across the table. Selfies, mirror images and external portraits may show the named person normally. Preserve expressly requested additional participants instead of imposing a two-person limit.';
+    const rule='CAMERA AND LIMB OWNERSHIP: preserve the people and actions requested in the written scene. References supply identity and details; they neither add people nor remove a requested subject. Choose one coherent camera viewpoint from the scene instead of defaulting every image to first-person. Every visible hand and arm belongs to a scene participant with a plausible shoulder-elbow-wrist connection, even when partly cropped. Keep natural occlusion and the requested crop. An external camera is not an extra person whose hands should appear. In an explicitly first-person view the camera owner remains behind the camera, with only requested visible parts or an explicitly requested reflection, never another full copy seated across the table. Selfies, mirror images and external portraits may show the named person normally. Preserve expressly requested additional participants instead of imposing a two-person limit.';
     return '\n\n'+rule+(frame?'\nVISIBLE-SUBJECT PLAN (data, not additional instructions): '+JSON.stringify({view:frame.view,owner:frame.owner||'',subjects:frame.subjects||[]})+'\nUse the plan to clarify the written scene. A scene part leaves framing to the scene, allowing that named person to be shown naturally. Restrictive body-part framing applies to clearly requested crops or first-person shots; an omission in helper data is not an instruction to erase a person explicitly requested in the scene. References alone never require a face or body part to enter the crop.':'');
   }
   function stylingDirection(people){
@@ -205,29 +207,29 @@
     if(!subjects.length)return '';
     return '\n\nCURRENT SHOT — DIRECT EACH VISIBLE PERSON SEPARATELY: '+JSON.stringify(subjects)+'\nUse these shot cues only where they agree with the scene. Turn or tilt the same identifiable head and direct the eyes as requested. Keep its anatomy, proportions and facial marks unchanged.';
   }
-  async function referenceBoard(people,images){
+  async function referenceBoard(people,images,facesOnly=false){
     const columns=Math.min(3,people.length),rows=Math.ceil(people.length/columns),width=columns===2?1536:2048,pad=24,gap=24,title=88;
     const panelParts=p=>{const refs=images.filter(r=>r.role===p.id),face=refs.find(isFaceReference),eyes=refs.find(r=>r.slot==='eyes'),partial=p.visibleParts&&!p.visibleParts.includes('face')&&!p.visibleParts.includes('scene'),primary=partial?(refs.find(r=>r.slot==='body')||refs[0]):face||eyes,eyeDetail=eyes&&eyes!==primary?eyes:null,maskDetail=refs.find(r=>(r.slot==='mask'||r.slot==='custom'&&/面罩|口罩|头套|mask|balaclava/i.test(r.purpose))&&r!==primary),extra=refs.filter(r=>r!==primary&&r!==eyeDetail&&r!==maskDetail);return {face,eyes,partial,primary,eyeDetail,maskDetail,extra};};
     const needed=Math.max(1040,...people.map(p=>{const {eyeDetail,maskDetail,extra}=panelParts(p);return 700+(eyeDetail?300:0)+(maskDetail?360:0)+Math.ceil(extra.length/3)*260;}));
-    const height=Math.min(4096,pad*2+title+rows*needed+(rows-1)*gap),pw=Math.floor((width-pad*2-gap*(columns-1))/columns),ph=Math.floor((height-pad*2-title-gap*(rows-1))/rows);
+    const height=facesOnly?960:Math.min(4096,pad*2+title+rows*needed+(rows-1)*gap),pw=Math.floor((width-pad*2-gap*(columns-1))/columns),ph=Math.floor((height-pad*2-title-gap*(rows-1))/rows);
     const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,width,height);ctx.fillStyle='#222';ctx.font='bold 24px sans-serif';ctx.fillText('GPHONE / IDENTITY REFERENCES — NOT THE FINAL COMPOSITION',pad,32);ctx.font='18px sans-serif';ctx.fillText('Facial features only. Head angle, expression and gaze follow the written scene.',pad,60);ctx.fillText('Tiles are independently resized. Their size does NOT indicate head size or body proportions.',pad,84);
     const manifest=[];
     const draw=async(ref,x,y,w,h,label)=>{
       ctx.fillStyle='#f3f3f3';ctx.fillRect(x,y,w,h);ctx.fillStyle='#222';ctx.font='bold 19px sans-serif';ctx.fillText(label,x+8,y+25,w-16);
       if(!ref){ctx.font='16px sans-serif';ctx.fillText('No face image — use written appearance if visible',x+10,y+h/2,w-20);return;}
       let bitmap;
-      try{bitmap=await createImageBitmap(imageBlob(ref.image));const scale=Math.min((w-16)/bitmap.width,(h-46)/bitmap.height);const dw=bitmap.width*scale,dh=bitmap.height*scale;ctx.drawImage(bitmap,x+(w-dw)/2,y+36+(h-40-dh)/2,dw,dh);}catch{throw Error('参考板无法读取「'+ref.name+'」的'+ref.purpose+'图片，请重新上传该参考图。');}finally{bitmap?.close?.();}
+      try{bitmap=await createImageBitmap(imageBlob(ref.image));const scale=Math.min((w-16)/bitmap.width,(h-46)/bitmap.height);const dw=bitmap.width*scale,dh=bitmap.height*scale;ctx.drawImage(bitmap,x+(w-dw)/2,y+36+(h-40-dh)/2,dw,dh);return {width:Math.round(dw),height:Math.round(dh)};}catch{throw Error('参考板无法读取「'+ref.name+'」的'+ref.purpose+'图片，请重新上传该参考图。');}finally{bitmap?.close?.();}
     };
     for(let i=0;i<people.length;i++){
       const p=people[i],x=pad+(i%columns)*(pw+gap),y=pad+title+Math.floor(i/columns)*(ph+gap),{face,eyes,partial,primary,eyeDetail,maskDetail,extra}=panelParts(p);
       ctx.strokeStyle='#bbb';ctx.strokeRect(x,y,pw,ph);ctx.fillStyle='#111';ctx.font='bold 25px sans-serif';ctx.fillText('PERSON '+(i+1)+' / '+p.name,x+12,y+34,pw-24);
-      const eyeH=eyeDetail?Math.min(280,Math.floor(ph*.23)):0,maskH=maskDetail?Math.min(340,Math.floor(ph*.25)):0,faceH=Math.min(620,Math.floor((ph-76-eyeH-maskH)*.62));
-      await draw(primary,x+12,y+50,pw-24,faceH,'P'+(i+1)+(partial?' VISIBLE '+p.visibleParts.join('/')+' ONLY / ':primary?.slot==='eyes'?' EYE IDENTITY / ':' PRIMARY FACE / ')+p.name);
+      const eyeH=eyeDetail?Math.min(280,Math.floor(ph*.23)):0,maskH=maskDetail?Math.min(340,Math.floor(ph*.25)):0,faceH=facesOnly?ph-64:Math.min(620,Math.floor((ph-76-eyeH-maskH)*.62));
+      const primaryPixels=await draw(primary,x+12,y+50,pw-24,faceH,'P'+(i+1)+(partial?' VISIBLE '+p.visibleParts.join('/')+' ONLY / ':primary?.slot==='eyes'?' EYE IDENTITY / ':' PRIMARY FACE / ')+p.name);
       let ey=y+faceH+64;if(eyeDetail){await draw(eyeDetail,x+12,ey,pw-24,eyeH,'P'+(i+1)+' EYES / identity, not gaze');ey+=eyeH+12;}
       if(maskDetail){await draw(maskDetail,x+12,ey,pw-24,maskH,'P'+(i+1)+' MASK / cloth + print, NOT facial anatomy');ey+=maskH+12;}
       const ec=Math.min(3,Math.max(1,extra.length)),er=Math.max(1,Math.ceil(extra.length/ec)),eh=Math.floor((y+ph-14-ey-12*(er-1))/er),ew=Math.floor((pw-24-12*(ec-1))/ec);
       for(let j=0;j<extra.length;j++)await draw(extra[j],x+12+(j%ec)*(ew+12),ey+Math.floor(j/ec)*(eh+12),ew,eh,'P'+(i+1)+' '+extra[j].purpose);
-      manifest.push({panel:'PERSON '+(i+1),name:p.name,faceReference:Boolean(face),primaryFaceSlot:face?.slot||null,eyeReference:Boolean(eyes),maskDetailReference:Boolean(maskDetail),visibleParts:p.visibleParts||null,faceUse:partial?'Face outside the frame; do not add it.':'Preserve the person’s facial geometry and landmarks from this primary face image. Reorient the same face in the scene; cloth is not facial anatomy.',eyeUse:eyes?'Use eye shape, spacing, iris color and brow identity; gaze follows scene.':'Use visible eyes from own face reference.',...(maskDetail?{maskUse:'Dedicated enlarged tile: garment construction and print design only, never a source of the person’s face, eyes or jaw shape.'}:{}),details:[...(maskDetail?[maskDetail]:[]),...extra].map(r=>r.purpose)});
+      manifest.push({panel:'PERSON '+(i+1),name:p.name,faceReference:Boolean(face),primaryFaceSlot:face?.slot||null,eyeReference:Boolean(eyes),maskDetailReference:Boolean(maskDetail),visibleParts:p.visibleParts||null,faceUse:partial?'Face outside the frame; do not add it.':'Preserve the person’s facial geometry and landmarks from this primary face image. Reorient the same face in the scene; cloth is not facial anatomy.',eyeUse:eyes?'Use eye shape, spacing, iris color and brow identity; gaze follows scene.':'Use visible eyes from own face reference.',...(maskDetail?{maskUse:'Dedicated enlarged tile: garment construction and print design only, never a source of the person’s face, eyes or jaw shape.'}:{}),details:[...(maskDetail?[maskDetail]:[]),...extra].map(r=>r.purpose),primaryPixels:isFaceReference(primary||{})?primaryPixels:undefined});
     }
     const image=canvas.toDataURL('image/jpeg',.92);
     const small=document.createElement('canvas'),scale=Math.min(1,480/Math.max(width,height));small.width=Math.round(width*scale);small.height=Math.round(height*scale);small.getContext('2d').drawImage(canvas,0,0,small.width,small.height);
@@ -263,12 +265,49 @@
     if(subject&&view==='external')result=result.replace(/\bin the foreground,\s+(?:a|one) hand\b/gi,'In the foreground, '+subject+'’s hand').replace(/\b(?:the person|the photographer|the camera-holder)[’']s\s+(lap|thigh|knee)\b/gi,(_,part)=>subject+'’s '+part).replace(/\btheir\s+(lap|thigh|knee)\b/gi,(_,part)=>subject+'’s '+part);
     return result;
   }
+  function photographerPattern(name){
+    const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),boundary='(?![a-z0-9_])';
+    return new RegExp('(?:\\b(?:photographed|taken|shot|filmed)\\s+by\\s+'+escaped+boundary+'|(?:摄影者|拍摄者)\\s*[:：]\\s*'+escaped+boundary+'|由\\s*'+escaped+'\\s*(?:拍摄|拍照|拍下))','i');
+  }
+  async function attributedPOV(job,target,scene,parsed,candidates){
+    const owners=candidates.filter(person=>namesOf(person).some(name=>photographerPattern(name).test(scene)));
+    if(owners.length!==1)return null;
+    const owner=owners[0];
+    const isOwner=name=>namesOf(owner).some(alias=>alias.toLocaleLowerCase()===name.toLocaleLowerCase());
+    const sceneWithoutCredit=namesOf(owner).sort((left,right)=>right.length-left.length).reduce((text,name)=>text.replace(photographerPattern(name),' '),scene);
+    const ownerSubject=parsed?.subjects?.find(subject=>isOwner(subject.name));
+    const ownerVisible=namesOf(owner).some(name=>{
+      const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      return new RegExp('(?:reflection of\\s+'+escaped+'(?![a-z0-9_])|'+escaped+'[’\']s\\s+reflection|'+escaped+'\\s+(?:is\\s+)?(?:visible|reflected)\\s+in\\s+(?:the |a )?mirror|镜(?:子|面)?里(?:能看到|映出)\\s*'+escaped+'|'+escaped+'的倒影)','i').test(sceneWithoutCredit);
+    });
+    const ownerHands=ownerSubject?.parts.includes('hands')||namesOf(owner).some(name=>{
+      const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      return new RegExp(escaped+'(?:[’\']s\\s+(?:(?:left|right)\\s+)?(?:hands?|forearms?)\\b|的(?:左|右)?手)','i').test(sceneWithoutCredit);
+    });
+    const subjects=(parsed?.subjects||[]).filter(subject=>!isOwner(subject.name));
+    for(const person of candidates){
+      if(person===owner||!namesOf(person).some(name=>hasName(sceneWithoutCredit,name))||subjects.some(subject=>namesOf(person).some(name=>name.toLocaleLowerCase()===subject.name.toLocaleLowerCase())))continue;
+      subjects.push({name:person.name,parts:['scene']});
+    }
+    if(!subjects.length&&['male','female'].includes(target)){
+      const binding=await conversationBinding(job.conversationId),bound=target==='male'?binding.character:binding.user;
+      const selected=bound?.enabled?bound:!binding.group&&job.profile?.enabled?job.profile[target]:null;
+      if(selected?.name&&!isOwner(selected.name))subjects.push({name:selected.name,parts:['scene']});
+    }
+    if(ownerVisible)subjects.push({name:owner.name,parts:ownerSubject&&showsFace(ownerSubject.parts)?ownerSubject.parts:['scene']});
+    else if(ownerHands)subjects.push({name:owner.name,parts:['hands']});
+    return {frame:{view:'first-person',owner:owner.name,subjects,scene,source:'attributed-pov'},scene,note:ownerVisible?'保留 '+owner.name+' 明确出镜的镜中倒影':'已识别镜头后的拍摄者 '+owner.name+(ownerHands?'，仅引用出镜的手部':'，未附拍摄者参考图')};
+  }
   async function resolveComposition(job,target){
     if(!job.profile?.enabled&&!entities().some(p=>p.enabled))return {frame:null,scene:job.row.prompt,note:''};
     const parsed=framePlan(job.row.prompt),scene=parsed?.scene||job.row.prompt.replace(framePattern,'').trim(),camera=sourceCamera(scene);
-    if(camera?.view==='first-person')return {frame:parsed,scene,note:''};
     const candidates=[...entities().filter(p=>p.enabled)];
     if(job.profile?.enabled)for(const role of ['male','female']){const p=job.profile[role];if(p?.name&&mentionsLegacyName(scene,p.name,candidates)&&!candidates.some(c=>namesOf(c).some(n=>n.toLocaleLowerCase()===p.name.toLocaleLowerCase())))candidates.push({...p,id:role,name:p.name});}
+    if(camera?.view==='first-person'||!camera&&parsed?.view==='first-person'){
+      const attributed=await attributedPOV(job,target,scene,parsed,candidates);
+      if(attributed)return attributed;
+      if(camera?.view==='first-person')return {frame:parsed,scene,note:''};
+    }
     let cast=candidates.filter(p=>namesOf(p).some(n=>hasName(scene,n))).filter(p=>!namesOf(p).some(n=>{const name=n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');return new RegExp('(?:photographed|taken|shot)\\s+by\\s+'+name+'(?:\\b|$)|(?:摄影者|拍摄者|由)\\s*'+name,'i').test(scene);}));
     if(!camera&&!parsed)return {frame:null,scene,note:''};
     const both=target==='both'||pairCue(scene)||cast.length>1;
@@ -569,9 +608,13 @@
           record.plannedImageCount=nativeImageCount;
           return await loggedFetch(new Request(request,{headers,body:form}),record,secrets);
         }
-        const selection=await selectPeople(job,target,frame),people=await enrichPeople(selection.people),images=selection.images;
+        const selection=await selectPeople(job,target,frame),people=await enrichPeople(selection.people),mode=referenceMode();
+        const facesOnly=mode==='faces'&&people.length===2&&(frame?.subjects.length??people.length)===2&&people.every(person=>selection.images.some(ref=>ref.role===person.id&&isFaceReference(ref)));
+        const images=facesOnly?selection.images.filter(isFaceReference):selection.images;
         record.note=selection.note;
         if(composition.note)record.note+='；'+composition.note;
+        if(facesOnly)record.note+='；双脸对照：仅用两位出镜者的脸部图';
+        else if(mode==='faces'&&people.length>1)record.note+='；本次未满足两张出镜脸图，保留常规参考';
         const styled=people.filter(p=>String(p.styling||'').trim());if(styled.length)record.note+='；已附 '+styled.map(p=>p.name).join('、')+' 的个人造型要求';
         const nativePeople=people.filter(p=>p.nativeAppearance);if(nativePeople.length)record.note+='；已读取 '+nativePeople.map(p=>p.name).join('、')+' 的原有人设外貌资料';
         const statedHeights=people.map(p=>({name:p.name,heightCm:heightFrom(p.appearance)||heightFrom(p.nativeAppearance)})).filter(p=>p.heightCm);if(statedHeights.length){record.heightData=statedHeights;record.note+='；沿用身高：'+statedHeights.map(p=>p.name+' '+p.heightCm+' cm').join('、');}
@@ -590,14 +633,16 @@
         const mapping=images.map((r,i)=>'Image '+(i+1)+': '+r.name+' — '+(isFaceReference(r)?'primary face identity':r.purpose)+'.').join('\n');
         let wireImages=images.map(r=>({image:r.image,filename:r.role+'-'+r.slot+'.jpg'}));
         let referenceMapping=mapping;
-        const boardMode=referenceMode()==='board'&&people.length>1&&images.length>1&&people.every(p=>images.some(r=>r.role===p.id));
+        const boardMode=mode!=='separate'&&people.length>1&&images.length>1&&people.every(p=>images.some(r=>r.role===p.id));
         let identities=people.map(p=>({name:p.name,visibleParts:p.visibleParts||null,faceImages:images.map((r,i)=>r.role===p.id&&isFaceReference(r)?i+1:null).filter(Boolean),eyeImages:images.map((r,i)=>r.role===p.id&&r.slot==='eyes'?i+1:null).filter(Boolean)}));
         if(boardMode){
-          const board=await referenceBoard(people,images);
+          const board=await referenceBoard(people,images,facesOnly);
           wireImages=[{image:board.image,filename:'GPHONE-identity-reference-board.jpg'}];
           identities=board.manifest;
           referenceMapping='There is ONE uploaded reference board. Use each named panel’s PRIMARY FACE tile as the source of that person’s likeness. The scene determines pose and crop. VISIBLE PARTS tiles guide only the requested parts. Other tiles guide only their labeled details. Render a single scene without drawing the reference board or its labels.';
           record.transportMode='board';record.referenceAssetCount=images.length;record.boardPreview=board.preview;record.plannedImageCount=1;
+          const dimensions=board.manifest.filter(panel=>panel.primaryPixels).map(panel=>panel.name+' '+panel.primaryPixels.width+'×'+panel.primaryPixels.height);
+          if(dimensions.length)record.note+='；参考板脸图尺寸：'+dimensions.join('、');
           const maskDetails=board.manifest.filter(p=>p.maskDetailReference).map(p=>p.name);if(maskDetails.length){record.enlargedMaskDetails=maskDetails;record.note+='；面罩参考独立放大：'+maskDetails.join('、');}
         }
         record.faceReferences=identities;
@@ -655,7 +700,7 @@
     if(!root)return;
     const list=entities();if(!entityId||!profiles.has(entityId))entityId=list[0]?.id||'';
     const p=profiles.get(entityId)||{id:'',kind:'entity',name:'',aliases:'',appearance:'',images:{},customLabel:'',enabled:false};
-    root.innerHTML=`<style>.rrl{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;padding:24px 20px;background:white;color:#151515;min-height:100%;box-sizing:border-box}.rrl *{box-sizing:border-box}.rrl h2{font-size:21px}.rrl h3{font-size:15px}.rrl .box{background:#f8f8f8;border-radius:24px;padding:20px;margin:18px 0}.rrl p{font-size:13px;line-height:1.8;color:#888}.rrl input:not([type=checkbox]),.rrl textarea,.rrl select{width:100%;border:0;border-radius:14px;padding:14px;background:white;font:inherit;margin:8px 0 16px;color:#222}.rrl label{display:block;font-size:13px;font-weight:600}.rrl button{border:0;border-radius:22px;padding:12px 18px;background:#f4f4f4;color:#111;font:inherit;cursor:pointer}.rrl .primary{background:#111;color:white;width:100%;margin-top:12px}.rrl .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.rrl .slot{height:170px;background:#eee;border-radius:16px;display:flex;align-items:center;justify-content:center;margin:12px 0;overflow:hidden}.rrl .slot img{width:100%;height:100%;object-fit:contain}.rrl .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.rrl .small{font-size:12px;color:#888;padding:8px}.rrl textarea{min-height:130px;resize:vertical}.rrl .slot span{color:#999;font-size:13px}.rrl .status{overflow-wrap:anywhere}</style><main class="rrl"><div class="row"><button id="back-pair">‹</button><h2>GPHONE · 人物参考库</h2></div><button id="open-records">生成记录 →</button><section class="box"><label>多人图参考方式</label><select id="multi-reference-mode"><option value="board" ${referenceMode()==="board"?"selected":""}>合并为一张参考板（推荐）</option><option value="separate" ${referenceMode()==="separate"?"selected":""}>分开发送原图</option></select><p>参考板将不同人物分区标注，避免只处理第一张输入时丢掉另一人。五官辨识特征跟参考图；头部朝向、表情与视线跟剧情，每个人看向具体的人或物。</p></section><p>线上、线下和群聊共用。按画面提示词里的姓名或别名匹配人物，不按发消息的人猜测。</p><div class="box"><label>已保存的人物</label><select id="entity-list"><option value="">选择人物</option>${list.map(v=>`<option value="${escape(v.id)}" ${v.id===entityId?'selected':''}>${escape((v.personaId?'user · ':'角色 · ')+(v.name||'未命名人物'))}</option>`).join('')}</select><p>已识别 ${contacts.length} 位联系人、${personas.length} 个 user 身份${contactError?" · "+escape(contactError):""}</p><div class="row"><button id="refresh-contacts">刷新联系人和 user</button><button id="new-entity">新建人物</button><button id="delete-entity">删除当前人物</button></div></div><div class="box"><label>从角色 / user 带入姓名（可选）</label><select id="contact"><option value="">手动填写，或选择角色</option>${[...contacts.map(c=>({...c,pickId:c.id})),...personas.map(c=>({...c,pickId:"user:"+c.id,label:"user · "+c.name}))].map(c=>`<option value="${escape(c.pickId||c.id)}">${escape(c.label||c.name||c.handle||c.id)}</option>`).join('')}</select><label>人物姓名</label><input id="person-name" maxlength="80" value="${escape(p.name)}" placeholder="例如 Simon Riley"><label>别名 / 昵称</label><input id="aliases" maxlength="300" value="${escape(p.aliases)}" placeholder="多个别名用逗号分隔，请避免重复"><label>人物外貌描述</label><textarea id="appearance" maxlength="4000" placeholder="脸型、眼睛、发型发色、体型、纹身位置……缺少对应参考图时按这里描述。">${escape(p.appearance)}</textarea><p>生成时读取已绑定角色 / user 的人设外貌，已有身高和体型无需重复填写；这里的手写描述作为补充，同项优先。</p><label for="proportions">身形与比例补充（可选）</label><textarea id="proportions" maxlength="1500" placeholder="已有身高直接沿用人设；可补充娇小体型、肩宽、头肩比例或双方体格差。">${escape(p.proportions)}</textarea><button id="petite-preset">填入娇小成年体型示例</button><label for="mask-mode" style="margin-top:18px">面罩佩戴方式</label><select id="mask-mode">${maskOptions(p)}</select><label for="styling">造型要求（可选）</label><textarea id="styling" maxlength="1500" placeholder="只影响此人物：发型、发色、面罩覆盖范围或服饰。五官仍按本人参考。">${escape(p.styling)}</textarea><button id="mask-hair-preset">填入露发巴拉克拉瓦＋蓬松短发</button><p>示例为浅棕偏金、蓬松有纹理的短发；巴拉克拉瓦上部褪下，鼻口到颈部仍为连续布料，不变成口罩。眼睛跟参考，视线跟剧情。脸部图被面罩遮挡时只能提供可见眉眼，骷髅印花不能当作真实五官；面罩位适合放清楚的布料与图案近景。检查后点「保存人物」。眼部、发型、面罩和穿着现可分别放图；身材位建议使用能看清全身比例的参考。</p><div class="grid">${Object.entries(slots).map(([slot,label])=>`<div><label>${label}</label>${slot==='custom'?`<input id="custom-label" maxlength="40" value="${escape(p.customLabel)}" placeholder="用途，如发型">`:''}<div class="slot">${p.images?.[slot]?`<img src="${escape(p.images[slot])}" alt="${label}">`:'<span>未上传 · 使用外貌描述</span>'}</div><button data-upload="${slot}">${p.images?.[slot]?'更换':'上传'}</button><input hidden type="file" data-libfile="${slot}" accept="image/jpeg,image/png,image/webp"><button class="small" data-clear="${slot}">移除</button></div>`).join('')}</div><p><label><input type="checkbox" id="entity-enabled" ${p.enabled?'checked':''}> 按姓名自动引用此人物</label></p><button class="primary" id="save-entity">保存人物</button></div><p class="status">${escape(status)}</p></main>`;
+    root.innerHTML=`<style>.rrl{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;padding:24px 20px;background:white;color:#151515;min-height:100%;box-sizing:border-box}.rrl *{box-sizing:border-box}.rrl h2{font-size:21px}.rrl h3{font-size:15px}.rrl .box{background:#f8f8f8;border-radius:24px;padding:20px;margin:18px 0}.rrl p{font-size:13px;line-height:1.8;color:#888}.rrl input:not([type=checkbox]),.rrl textarea,.rrl select{width:100%;border:0;border-radius:14px;padding:14px;background:white;font:inherit;margin:8px 0 16px;color:#222}.rrl label{display:block;font-size:13px;font-weight:600}.rrl button{border:0;border-radius:22px;padding:12px 18px;background:#f4f4f4;color:#111;font:inherit;cursor:pointer}.rrl .primary{background:#111;color:white;width:100%;margin-top:12px}.rrl .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.rrl .slot{height:170px;background:#eee;border-radius:16px;display:flex;align-items:center;justify-content:center;margin:12px 0;overflow:hidden}.rrl .slot img{width:100%;height:100%;object-fit:contain}.rrl .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.rrl .small{font-size:12px;color:#888;padding:8px}.rrl textarea{min-height:130px;resize:vertical}.rrl .slot span{color:#999;font-size:13px}.rrl .status{overflow-wrap:anywhere}</style><main class="rrl"><div class="row"><button id="back-pair">‹</button><h2>GPHONE · 人物参考库</h2></div><button id="open-records">生成记录 →</button><section class="box"><label>多人图参考方式</label><select id="multi-reference-mode"><option value="board" ${referenceMode()==="board"?"selected":""}>完整参考板</option><option value="faces" ${referenceMode()==="faces"?"selected":""}>双脸对照（仅用两人的脸部图）</option><option value="separate" ${referenceMode()==="separate"?"selected":""}>分开发送原图</option></select><p>双脸对照用于两人同时露脸：只把双方的脸部图做成一张板，便于判断相似度；身材、穿着等按剧情与外貌文字处理。单人或局部画面沿用常规参考。</p></section><p>线上、线下和群聊共用。按画面提示词里的姓名或别名匹配人物，不按发消息的人猜测。</p><div class="box"><label>已保存的人物</label><select id="entity-list"><option value="">选择人物</option>${list.map(v=>`<option value="${escape(v.id)}" ${v.id===entityId?'selected':''}>${escape((v.personaId?'user · ':'角色 · ')+(v.name||'未命名人物'))}</option>`).join('')}</select><p>已识别 ${contacts.length} 位联系人、${personas.length} 个 user 身份${contactError?" · "+escape(contactError):""}</p><div class="row"><button id="refresh-contacts">刷新联系人和 user</button><button id="new-entity">新建人物</button><button id="delete-entity">删除当前人物</button></div></div><div class="box"><label>从角色 / user 带入姓名（可选）</label><select id="contact"><option value="">手动填写，或选择角色</option>${[...contacts.map(c=>({...c,pickId:c.id})),...personas.map(c=>({...c,pickId:"user:"+c.id,label:"user · "+c.name}))].map(c=>`<option value="${escape(c.pickId||c.id)}">${escape(c.label||c.name||c.handle||c.id)}</option>`).join('')}</select><label>人物姓名</label><input id="person-name" maxlength="80" value="${escape(p.name)}" placeholder="例如 Simon Riley"><label>别名 / 昵称</label><input id="aliases" maxlength="300" value="${escape(p.aliases)}" placeholder="多个别名用逗号分隔，请避免重复"><label>人物外貌描述</label><textarea id="appearance" maxlength="4000" placeholder="脸型、眼睛、发型发色、体型、纹身位置……缺少对应参考图时按这里描述。">${escape(p.appearance)}</textarea><p>生成时读取已绑定角色 / user 的人设外貌，已有身高和体型无需重复填写；这里的手写描述作为补充，同项优先。</p><label for="proportions">身形与比例补充（可选）</label><textarea id="proportions" maxlength="1500" placeholder="已有身高直接沿用人设；可补充娇小体型、肩宽、头肩比例或双方体格差。">${escape(p.proportions)}</textarea><button id="petite-preset">填入娇小成年体型示例</button><label for="mask-mode" style="margin-top:18px">面罩佩戴方式</label><select id="mask-mode">${maskOptions(p)}</select><label for="styling">造型要求（可选）</label><textarea id="styling" maxlength="1500" placeholder="只影响此人物：发型、发色、面罩覆盖范围或服饰。五官仍按本人参考。">${escape(p.styling)}</textarea><button id="mask-hair-preset">填入露发巴拉克拉瓦＋蓬松短发</button><p>示例为浅棕偏金、蓬松有纹理的短发；巴拉克拉瓦上部褪下，鼻口到颈部仍为连续布料，不变成口罩。眼睛跟参考，视线跟剧情。脸部图被面罩遮挡时只能提供可见眉眼，骷髅印花不能当作真实五官；面罩位适合放清楚的布料与图案近景。检查后点「保存人物」。眼部、发型、面罩和穿着现可分别放图；身材位建议使用能看清全身比例的参考。</p><div class="grid">${Object.entries(slots).map(([slot,label])=>`<div><label>${label}</label>${slot==='custom'?`<input id="custom-label" maxlength="40" value="${escape(p.customLabel)}" placeholder="用途，如发型">`:''}<div class="slot">${p.images?.[slot]?`<img src="${escape(p.images[slot])}" alt="${label}">`:'<span>未上传 · 使用外貌描述</span>'}</div><button data-upload="${slot}">${p.images?.[slot]?'更换':'上传'}</button><input hidden type="file" data-libfile="${slot}" accept="image/jpeg,image/png,image/webp"><button class="small" data-clear="${slot}">移除</button></div>`).join('')}</div><p><label><input type="checkbox" id="entity-enabled" ${p.enabled?'checked':''}> 按姓名自动引用此人物</label></p><button class="primary" id="save-entity">保存人物</button></div><p class="status">${escape(status)}</p></main>`;
     root.querySelector('#open-records').onclick=()=>{historyView=true;render();};
     const snapshot=()=>({...p,id:p.id||'person-'+crypto.randomUUID(),kind:'entity',name:root.querySelector('#person-name').value.trim(),aliases:root.querySelector('#aliases').value.trim(),appearance:root.querySelector('#appearance').value.trim(),styling:root.querySelector('#styling').value.trim(),proportions:root.querySelector('#proportions').value.trim(),maskMode:root.querySelector('#mask-mode').value,customLabel:root.querySelector('#custom-label').value.trim(),images:{...p.images},enabled:root.querySelector('#entity-enabled').checked});
     const persist=async updated=>{if(!updated.name)throw Error('请填写人物姓名。');for(const other of entities().filter(v=>v.id!==updated.id)){if(namesOf(updated).some(n=>namesOf(other).some(m=>m.toLocaleLowerCase()===n.toLocaleLowerCase())))throw Error('这个姓名或别名已被另一人物使用，请换一个。');}await save(updated);entityId=updated.id;status='人物资料已保存';render();};
