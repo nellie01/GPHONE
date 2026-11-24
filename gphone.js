@@ -1,7 +1,7 @@
-/* GPHONE · 0.6.6. Reuses native image requests; no API settings. */
+/* GPHONE · 0.6.7. Reuses native image requests; no API settings. */
 (() => {
   'use strict';
-  const ID = 'roche-reference-pair', APP = ID + '-app', VERSION = '0.6.6';
+  const ID = 'roche-reference-pair', APP = ID + '-app', VERSION = '0.6.7';
   if (!window.RochePlugin?.register) return;
   window.__rocheReferencePair?.dispose();
   let root, sdk, selected = '', state, stopped = false;
@@ -650,6 +650,10 @@
         if(!images.length){
           if(frame){
             const fields=Object.fromEntries(Object.entries(body).filter(([k,v])=>!['image','image[]','mask','prompt'].includes(k)&&!(v instanceof Blob)));
+            if(type.includes('multipart/form-data')&&typeof fields.n==='string'){
+              if(!/^\d+$/.test(fields.n)||!Number.isSafeInteger(Number(fields.n)))throw Error('生图数量 n 格式不正确，请检查生图设置。');
+              fields.n=Number(fields.n);
+            }
             const headers=new Headers(request.headers);headers.set('content-type','application/json');headers.delete('content-length');
             url.pathname=url.pathname.replace(/\/images\/(generations|edits)\/?$/,'/images/generations');
             status='本次仅按可见部位和场景文字生成，不附加人脸';
