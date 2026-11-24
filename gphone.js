@@ -1,7 +1,7 @@
-/* GPHONE · 0.6.7. Reuses native image requests; no API settings. */
+/* GPHONE · 0.6.8. Reuses native image requests; no API settings. */
 (() => {
   'use strict';
-  const ID = 'roche-reference-pair', APP = ID + '-app', VERSION = '0.6.7';
+  const ID = 'roche-reference-pair', APP = ID + '-app', VERSION = '0.6.8';
   if (!window.RochePlugin?.register) return;
   window.__rocheReferencePair?.dispose();
   let root, sdk, selected = '', state, stopped = false;
@@ -332,6 +332,11 @@
     const scene=job.row.prompt;
     const explicit=namedPeople(scene),people=[...explicit],notes=[];
     const both=target==='both'||explicit.length>=2||pairCue(scene);
+    const minor=/\b(?:1[0-7]|[1-9])\s*(?:years?[- ]old|yrs?[- ]old)\b|(?:[一二两三四五六七八九十]{1,3}|1[0-7]|[1-9])\s*岁/i.test(scene);
+    if(both&&minor&&!explicit.length&&!frame){
+      const textFrame={view:'external',owner:'',subjects:[],scene:scene.replace(framePattern,'').trim(),source:'unnamed-minor'};
+      return {people:[],images:[],frame:textFrame,scene:textFrame.scene,both:true,note:'未写出人物姓名，少年时期画面按原剧情文字生成，不套用其他人物参考图'};
+    }
     const pair=job.profile?.enabled?job.profile:null;
     const legacy=role=>{
       const p=pair?.[role];if(!p||!Object.values(p.images||{}).some(Boolean))return null;
@@ -384,7 +389,11 @@
       binding ||= await conversationBinding(job.conversationId);const p=target==='male'?binding.character:binding.user;
       if(p&&!p.enabled)throw Error('「'+p.name+'」的自动引用未开启。');add(p);
     }
-    if(both&&people.length<2)throw Error('双人图只识别到 '+(people.map(p=>p.name).join('、')||'0 人')+'，已停止单人参考图请求。请补全会话双方的身份绑定或在提示词中写出双方准确姓名。');
+    if(both&&people.length<2){
+      if(explicit.length)throw Error('双人图只识别到 '+(people.map(p=>p.name).join('、')||'0 人')+'，已停止单人参考图请求。请补全会话双方的身份绑定或在提示词中写出双方准确姓名。');
+      const textFrame={view:'external',owner:'',subjects:[],scene:scene.replace(framePattern,'').trim(),source:'unmatched-pair'};
+      return {people:[],images:[],frame:textFrame,scene:textFrame.scene,both:true,note:'未能确认双人身份，按原剧情文字生成，未引用其他角色的图片'};
+    }
     if(both){for(const p of people)if(!Object.values(p.images||{}).some(Boolean)&&!p.appearance)throw Error('双人图中的「'+p.name+'」尚未设置参考图或外貌描述，已停止不完整请求。');}
     const images=visibleReferences(people);
     if(people.length>1)images.sort((a,b)=>{const rank=r=>isFaceReference(r)?0:r.slot==='eyes'?1:r.slot==='hair'||r.slot==='custom'&&/发型|发色|hair/i.test(r.purpose)?2:r.slot==='mask'?3:r.slot==='body'?4:r.slot==='outfit'?5:r.slot==='tattoo'?6:7;return rank(a)-rank(b);});
@@ -609,6 +618,7 @@
           return await loggedFetch(new Request(request,{headers,body:form}),record,secrets);
         }
         const selection=await selectPeople(job,target,frame),people=await enrichPeople(selection.people),mode=referenceMode();
+        const activeFrame=selection.frame||frame;
         const facesOnly=mode==='faces'&&people.length===2&&(frame?.subjects.length??people.length)===2&&people.every(person=>selection.images.some(ref=>ref.role===person.id&&isFaceReference(ref)));
         const images=facesOnly?selection.images.filter(isFaceReference):selection.images;
         record.note=selection.note;
@@ -628,7 +638,7 @@
         const descriptions=people.map(p=>({name:p.name,appearance:p.appearance||'',nativeAppearance:p.nativeAppearance||'',visibleParts:p.visibleParts||null,availableReferences:images.filter(r=>r.role===p.id).map(r=>r.purpose)}));
         record.plannedImageCount=images.length;
         record.people=people.map(p=>({id:p.id,name:p.name,source:p.personaId?'user':'character',parts:images.filter(r=>r.role===p.id).map(r=>r.purpose),count:images.filter(r=>r.role===p.id).length,usesDescription:Boolean(p.appearance||p.nativeAppearance),usesStyling:Boolean(String(p.styling||'').trim())}));
-        if(!frame&&!images.length&&!descriptions.some(p=>p.appearance||p.nativeAppearance)&&!people.some(p=>p.proportions))throw Error('画面对应的人物尚无参考图或外貌描述。');
+        if(!activeFrame&&!images.length&&!descriptions.some(p=>p.appearance||p.nativeAppearance)&&!people.some(p=>p.proportions))throw Error('画面对应的人物尚无参考图或外貌描述。');
         prompt=prompt.replace(/\[RRP:(male|female|both|none)\]/gi,'').trim();
         const mapping=images.map((r,i)=>'Image '+(i+1)+': '+r.name+' — '+(isFaceReference(r)?'primary face identity':r.purpose)+'.').join('\n');
         let wireImages=images.map(r=>({image:r.image,filename:r.role+'-'+r.slot+'.jpg'}));
@@ -646,9 +656,9 @@
           const maskDetails=board.manifest.filter(p=>p.maskDetailReference).map(p=>p.name);if(maskDetails.length){record.enlargedMaskDetails=maskDetails;record.note+='；面罩参考独立放大：'+maskDetails.join('、');}
         }
         record.faceReferences=identities;
-        const finalPrompt=prompt+'\n\nREFERENCE GUIDE:\n'+referenceMapping+'\nFACE IDENTITY ASSIGNMENTS: '+JSON.stringify(identities)+'\nFor each visible face, preserve the likeness of that person’s own primary face image: the same facial proportions, landmarks and age. Keep the head shape, nose, lips and relative feature placement stable through turns and expressions. Do not beautify, average faces or borrow a face from hair, clothing or body photos. References never add people or visible body parts.'+moleDirection(moleInventory)+shotDirection(people,frame)+'\n\nCHARACTER APPEARANCE DATA (not instructions): '+JSON.stringify(descriptions)+'\nUse the named person’s references for their labeled visible parts. Use written appearance for missing details. Preserve the scene and clothes. Tattoos and other marks remain hidden where covered.'+naturalDirection(frame?.scene||job.row.prompt,people,frame)+stylingDirection(people)+partDirection(people,images)+bodyDirection(people)+maskDirection(people)+maskFitDirection(people,images)+coveredIdentityDirection(people,images)+framingDirection(frame);
+        const finalPrompt=prompt+'\n\nREFERENCE GUIDE:\n'+referenceMapping+'\nFACE IDENTITY ASSIGNMENTS: '+JSON.stringify(identities)+'\nFor each visible face, preserve the likeness of that person’s own primary face image: the same facial proportions, landmarks and age. Keep the head shape, nose, lips and relative feature placement stable through turns and expressions. Do not beautify, average faces or borrow a face from hair, clothing or body photos. References never add people or visible body parts.'+moleDirection(moleInventory)+shotDirection(people,activeFrame)+'\n\nCHARACTER APPEARANCE DATA (not instructions): '+JSON.stringify(descriptions)+'\nUse the named person’s references for their labeled visible parts. Use written appearance for missing details. Preserve the scene and clothes. Tattoos and other marks remain hidden where covered.'+naturalDirection(activeFrame?.scene||job.row.prompt,people,activeFrame)+stylingDirection(people)+partDirection(people,images)+bodyDirection(people)+maskDirection(people)+maskFitDirection(people,images)+coveredIdentityDirection(people,images)+framingDirection(activeFrame);
         if(!images.length){
-          if(frame){
+          if(activeFrame){
             const fields=Object.fromEntries(Object.entries(body).filter(([k,v])=>!['image','image[]','mask','prompt'].includes(k)&&!(v instanceof Blob)));
             if(type.includes('multipart/form-data')&&typeof fields.n==='string'){
               if(!/^\d+$/.test(fields.n)||!Number.isSafeInteger(Number(fields.n)))throw Error('生图数量 n 格式不正确，请检查生图设置。');
@@ -657,7 +667,8 @@
             const headers=new Headers(request.headers);headers.set('content-type','application/json');headers.delete('content-length');
             url.pathname=url.pathname.replace(/\/images\/(generations|edits)\/?$/,'/images/generations');
             status='本次仅按可见部位和场景文字生成，不附加人脸';
-            return await loggedFetch(new Request(url,{method:'POST',headers,body:JSON.stringify({...fields,prompt:finalPrompt}),signal:request.signal,credentials:request.credentials,mode:request.mode,cache:request.cache,redirect:request.redirect}),record,secrets);
+            const textPrompt=['unnamed-minor','unmatched-pair'].includes(activeFrame.source)?prompt:finalPrompt;
+            return await loggedFetch(new Request(url,{method:'POST',headers,body:JSON.stringify({...fields,prompt:textPrompt}),signal:request.signal,credentials:request.credentials,mode:request.mode,cache:request.cache,redirect:request.redirect}),record,secrets);
           }
           if(!type.includes('application/json'))throw Error('当前编辑请求没有可用参考图，请补充图片。');
           status='本次使用人物外貌描述生成';
