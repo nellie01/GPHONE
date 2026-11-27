@@ -1,13 +1,13 @@
 {
-    "hash":  "4d6b7f8452ef45d37fc0687ac706e22d72e3a9e92d50760cf1807dd7354104ad",
-    "version":  "0.6.9",
-    "id":  "roche-reference-pair",
-    "name":  "GPHONE",
-    "entry":  "https://raw.githubusercontent.com/nellie01/GPHONE/a7215e33f77397bd0ea03a8ca52638218f797d41/gphone.js",
-    "permissions":  [
-                        "ui",
-                        "storage",
-                        "chat"
-                    ],
-    "description":  "GPHONE 浜虹墿鍙傝€冨簱锛氳鑹蹭笌 user銆佺嚎涓婄嚎涓嬬兢鑱婂弬鑰冨浘銆佺敓鎴愯褰曞強澶辫触鍘熷洜"
+  "hash": "12319438e8b9f2ad408a69e5d40142c2c4fa164845a4521573590db27e823c7c",
+  "version": "0.6.10",
+  "id": "roche-reference-pair",
+  "name": "GPHONE",
+  "entry": "https://raw.githubusercontent.com/nellie01/GPHONE/e185605cec50f0553827455bdc8dcbf65eac696f/gphone.js",
+  "permissions": [
+    "ui",
+    "storage",
+    "chat"
+  ],
+  "description": "GPHONE 人物参考库：角色与 user、线上线下群聊参考图、生成记录及失败原因"
 }
